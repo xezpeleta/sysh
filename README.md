@@ -96,7 +96,7 @@ $ ssh -i … sy@server.example 'systemctl restart nginx'
 approval_required: req_a1b2c3 (report this id; a human must approve it)
 root@server:~# sysh approve req_a1b2c3
 argv=["systemctl","restart","nginx"]   path=/usr/bin/systemctl
-confirm (8 chars): 3f9a2c1e_            # bound to the full argv
+type the pattern-chosen argument: nginx_   # what the policy's patterns matched
 [runs as root, in its own systemd unit, result journaled root-side]
 $ ssh -i … sy@server.example 'sysh-result req_a1b2c3'
 ```
@@ -138,12 +138,12 @@ externally observable by its provider, which the docs say out loud.
 
 ## Status
 
-**Design phase — v2, post-review.** The specification in
-[PROJECT.md](PROJECT.md) has been through one external security review; all
-critical findings are folded in and dispositioned in its §13. Phase 1
-(base tier + observability) is the implementation target; elevation
-(phase 2) ships only after phase 1 is reviewed in production. No code has
-been written yet.
+**Design phase — v3, post-review.** The specification in
+[PROJECT.md](PROJECT.md) has been through two external security review
+rounds; all critical findings are folded in and dispositioned in its §13.
+Phase 1 (base tier + observability) is the implementation target;
+elevation (phase 2) ships only after phase 1 is reviewed in production.
+No code has been written yet.
 
 ## License
 

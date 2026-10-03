@@ -1,7 +1,7 @@
 # sysh — Project Specification
 
-Status: **design v2, pre-implementation.** This revision incorporates an
-external security review of v1 (disposition in §13). No prior prototypes are
+Status: **design v3, pre-implementation.** Incorporates two external
+security review rounds (dispositions in §13). No prior prototypes are
 assumed; the document is self-contained.
 
 ---
@@ -79,8 +79,8 @@ One static Go binary on the server, behaving by role:
 │                                                                       │
 │  /etc/sysh/  (root-owned 0644/0600): authorized_keys, keys.map,       │
 │              policy.toml, docs/                                       │
-│  /var/spool/sysh/requests/ (sy-writable; untrusted data; phase 2)     │
-│  /run/sysh/  (root-owned): results, request state                     │
+│  /run/sysh/requests/ (root:sy 0730 drop box; untrusted; phase 2)     │
+│  /run/sysh/  (root-owned; results root:sy 0750; tmpfiles.d)          │
 │  /run/sysh-tripwire/ (world-writable, sticky): lockdown only          │
 └───────────────────────────────────────────────────────────────────────┘
         ▲                                     ▲
@@ -118,15 +118,26 @@ runs in a different trust domain (§10).
    by `sy`; shell `/usr/bin/sysh`). **If a `sy` user pre-exists, verify it
    has no supplementary groups** (`sudo`, `adm`, `docker`, …); refuse with a
    clear error if it does.
-2. Create `/etc/sysh/` (root:root 0755), `/run/sysh/` (root:root 0755),
-   `/var/spool/sysh/requests/` (root:root 0730, `sy`-writable),
-   `/run/sysh-tripwire/` (1777, sticky).
+2. Create `/etc/sysh/` (root:root 0755). `/run` is a tmpfs, so the
+   volatile state is declared via **tmpfiles.d** and recreated at boot,
+   not by postinst: `/run/sysh/` (root:root 0755; phase-2 results as
+   root:sy 0750 so other local users cannot read root output) and
+   `/run/sysh/requests/` (root:sy 0730 — a **drop box**: `sy` may create
+   files but not list the directory), plus `/run/sysh-tripwire/`
+   (1777, sticky). The request spool is intentionally volatile: requests
+   are TTL'd at 10 minutes and must not survive a reboot.
 3. Install the sshd drop-in (§5.3). Validate with `sshd -t` before reload;
    **roll back on failure** — a bad drop-in must never lock out admins (P7).
 4. debconf: enable auditd integration? (default yes if auditd present)
    → install UID-scoped rules (§8.4).
-5. `purge` removes the user, `/etc/sysh`, the sshd drop-in, the auditd
-   rules, and the spool. Audit history in the journal is intentionally kept.
+5. debconf (default no): add `sy` to a **read-only journal group**
+   (`systemd-journal` only — never `adm`, `docker`, `sudo`) so operators
+   can read `sysh` events without root. This is the single documented
+   exception to the no-supplementary-groups check; `doctor` knows it.
+6. `purge` removes the user, `/etc/sysh`, the sshd drop-in, the auditd
+   rules, and the tmpfiles.d entries. Audit history in the journal is
+   intentionally kept. The spool, being volatile, disappears with the
+   reboot. Nothing under `/var` is left.
 
 No keys are generated at install time (nothing is signed — §12), so cloned
 images and golden templates are safe.
@@ -145,7 +156,8 @@ newlines and any option granting command/pty/forwarding/agent access,
 optionally requires `from=` (configurable), computes the key fingerprint,
 prompts for a key ID, and writes both the line (`/etc/sysh/authorized_keys`,
 root:root 0644 — sshd reads AuthorizedKeysFile as the target user) and
-`fingerprint → key-id` into `/etc/sysh/keys.map` (root:root 0600).
+`fingerprint → key-id` into `/etc/sysh/keys.map` (root:root 0644 — the
+mapping is not secret, and the gateway must be able to read it).
 
 ## 5. Identity and keys
 
@@ -157,7 +169,10 @@ root:root 0644 — sshd reads AuthorizedKeysFile as the target user) and
   per-session file (`$SSH_USER_AUTH`) which the shell reads to obtain the
   **fingerprint**. The displayed key ID comes from the root-owned
   `keys.map`. Identity in audit events is therefore kernel/sshd-derived,
-  not agent-claimed.
+  not agent-claimed. (Implementation note: verify on the target OpenSSH
+  whether the `$SSH_USER_AUTH` file is user-owned; the gateway reads it
+  first thing, before any child could tamper, and `doctor` cross-checks
+  against sshd's own `Accepted publickey … SHA256:…` log line.)
 - **Operator root access**: the operator's own SSH keys. **Recommended:
   FIDO2 hardware-backed keys (`ed25519-sk`).** Deployment requirement DR1
   (§10/§11) covers separation from the agent harness.
@@ -200,16 +215,22 @@ sshd execs the shell as `sysh -c '<command string>'`. `sysh`:
 
 ### 6.2 Matching (hardened)
 
-Per rule, each position is either a literal or a **pattern**: an implicitly
-anchored regex (full match) that the linter rejects unless it can never
-match a string starting with `-` (no option injection). Examples:
-`"nginx|unifi"`, `"[a-z0-9@._\\-]+"`.
+Per rule, each position is either a literal or a **pattern** from a
+restricted grammar — literals, alternation, and character classes only
+(no backreferences, lookaround, or unbounded repetition) — compiled with
+Go's RE2 (linear time) and anchored `\A…\z`. From the syntax tree the
+linter computes the pattern's first-character set and rejects anything
+that can match a leading `-` (no option injection). Examples:
+`"nginx|unifi"`, `"[a-z0-9@._][a-z0-9@._\\-]*"` (leading class without
+`-`).
 
 - **Exact length by default**: extra arguments are denied. Opt-in
   `rest = "<pattern>"` allows additional positions, each matching that
   anchored pattern.
-- **All deny rules are evaluated first**; any match refuses. Then the first
-  allow match wins.
+- **All deny rules are evaluated first**, with **prefix semantics**: a
+  deny matches if its positions match the argv's leading positions, so
+  `deny ["find"]` refuses `find` with any arguments. Then the first allow
+  match wins (allow rules stay exact-length, §6.2).
 - Rules carry an absolute `path` to the binary (no `PATH` search); the
   linter verifies existence, root ownership, and that neither the binary
   nor any ancestor directory is group/world-writable.
@@ -242,16 +263,42 @@ must read the stderr line.
 
 Any local user may create `/run/sysh-tripwire/lockdown` (a tripwire: an
 agent that notices compromise can lock its own channel). While present, all
-agent-channel exec is refused (exit 2). Only root clears it, by fixed name.
-Root code never opens or follows paths inside any `sy`-writable directory.
+agent-channel exec is refused (exit 2). Only root clears it, by fixed name. More
+generally, root code never opens or follows paths inside `sy`-writable
+directories — with one narrow, fully specified exception: the phase-2
+request spool, read only through the safe pattern of §9 (`openat` with
+`O_NOFOLLOW|O_NONBLOCK`, regular-file and `st_nlink == 1` checks, size
+caps).
 
 ### 6.6 Permissive mode
 
 A policy may set `mode = "permissive"`: every well-formed argv (still
 ASCII-checked, still NNP, still scoped and journaled) runs as the
 unprivileged `sy` user; the OS's own permissions are the only limit. This
-serves the snapshot-protected "give it room, keep the record" workflow. It
-never grants root; `privileged` rules in permissive mode behave as in §9.
+serves the snapshot-protected "give it room, keep the record" workflow —
+understood honestly as **arbitrary code as `sy` on a host you consider
+disposable**: it can reach local services, world-readable secrets, other
+hosts, and (on cloud VMs) the instance metadata endpoint. It never grants
+root; `privileged` rules in permissive mode behave as in §9.
+
+Two consequences follow:
+
+- **auditd integration (§8.4) is mandatory in permissive mode** —
+  `policy install` refuses a permissive policy when the UID-scoped rules
+  are not active. With arbitrary code running as `sy`, journald events
+  alone are not a trustworthy record (R4/R7); auditd is the kernel-level
+  source that survives gateway tampering.
+- On cloud hosts with a metadata endpoint, an nftables/iptables
+  **owner-match rule blocking that endpoint for the `sy` UID** can be
+  installed alongside the auditd rules (documented, opt-in). On-prem VMs
+  without a metadata service need nothing.
+
+Persistence hygiene (both modes): code that outlives its session
+(`crontab`, `at`/`batch`, user systemd units, lingering) escapes both NNP
+and the gateway's logging. In enforcing mode the linter denies those
+tools (§7); in any mode `doctor` verifies `Linger=no` for `sy`, an empty
+crontab, and `cron.allow`/`at.allow` excluding `sy` — tripwires, not
+walls.
 
 ### 6.7 Process containment
 
@@ -262,12 +309,21 @@ Every child exec:
   unusable for the entire agent tree, on both tiers, regardless of host
   configuration. "No elevation surface" is a kernel property, not a claim
   about config files.
-- runs inside a transient systemd scope
-  (`systemd-run --scope --unit sysh-<keyid>-<seq>`), giving journal
+- the gateway itself calls `prctl(PR_SET_DUMPABLE, 0)` at startup, so
+  same-UID processes cannot `ptrace` it or write its `/proc/<pid>/mem`
+  (children re-enable dumpable on exec). `doctor` checks
+  `kernel.yama.ptrace_scope >= 1` and warns otherwise.
+- runs inside a transient systemd scope of the **user manager**
+  (`systemd-run --user --scope --unit sysh-<sanitized-keyid>-<seq>`; key
+  IDs are reduced to `[a-z0-9-]` before use in unit names), giving journal
   attribution, `TasksMax`, `MemoryMax`, and kill-the-whole-cgroup on
-  timeout (a `setsid`/double-fork cannot escape a cgroup, unlike a process
-  group).
-- has output capped; on timeout the scope is killed (exit 124).
+  timeout. This needs `UsePAM yes`, a running `user@<uid>.service`, and
+  cgroup delegation of `memory`/`pids`; `doctor` verifies all three, and
+  the gateway falls back to a plain subprocess (no scope, still NNP) with
+  `scope=false` marked in the event.
+- has output capped; on timeout the scope is killed (exit 124), and when
+  the SSH session drops the gateway kills the scope too (SIGHUP/SIGPIPE)
+  so nothing outlives its session.
 
 Multiple agent keys share one UID: key identity is **attribution, not
 isolation** (R4).
@@ -304,15 +360,23 @@ privileged = true             # phase 2: never executed by the agent (§9)
 - `sysh policy install` (root) **runs the linter and refuses on any
   finding**; `sysh doctor` re-lints installed policies.
 - The linter (v1, mandatory): pattern safety (anchored, cannot match a
-  leading `-`, cannot match empty), path checks (§6.2), and a
-  package-maintained **escape-hatch denylist** — shells and interpreters
-  (`sh`, `bash`, `python*`, `perl`, `ruby`, `node`, `awk`, …), argv
-  passthrough / execution wrappers (`env`, `nohup`, `setsid`, `stdbuf`,
-  `timeout`, `nice`, `xargs`, `find`, `tar`, `git`, `systemd-run`), remote
-  and privileged tools (`ssh`, `scp`, `sftp`, `nc`, `socat`, `docker`,
-  `podman`, `sudo`, `su`, `mount`), and pagers/editors (`less`, `vi*`, …).
-  Over-broad rules are the most likely real-world failure; the linter is
-  the countermeasure, not an afterthought.
+  leading `-`, cannot match empty — via the first-character set of the
+  restricted grammar, §6.2), path checks (§6.2), and a package-maintained
+  **escape-hatch denylist** — shells and interpreters (`sh`, `bash`,
+  `python*`, `perl`, `ruby`, `node`, `awk`, …), argv passthrough /
+  execution wrappers (`env`, `nohup`, `setsid`, `stdbuf`, `timeout`,
+  `nice`, `xargs`, `find`, `tar`, `git`, `systemd-run`), remote and
+  privileged tools (`ssh`, `scp`, `sftp`, `nc`, `socat`, `docker`,
+  `podman`, `sudo`, `su`, `mount`), pagers/editors (`less`, `vi*`, …),
+  and persistence tools (`crontab`, `at`, `batch`, `systemctl --user`,
+  `busctl`). The denylist matches the **realpath and basename** of each
+  rule's `path` — not `argv[0]` — so aliases and versioned names
+  (`python3.11`, `view`, `busybox`) cannot slip past. Binaries that write
+  files or open network connections without being executors (`curl`,
+  `wget`, `rsync`, …) raise a **warning** that requires an explicit
+  `ack = true` on the rule before `policy install` proceeds. Over-broad
+  rules are the most likely real-world failure; the linter is the
+  countermeasure, not an afterthought.
 - Loading: open once, `fstat` ownership/mode of file and ancestors, parse
   **that same buffer** (no re-open TOCTOU). Fail closed (all exec denied,
   stderr line explains) on any anomaly.
@@ -330,14 +394,18 @@ did it touch?"*
 Every exec attempt — allowed, denied, malformed, locked down — produces one
 structured event: timestamp, key id + fingerprint (sshd-derived, §5),
 decision + matching rule index, full argv, exit status, duration, systemd
-unit name. Phase 2 adds request/approval/result events to the same stream.
+unit name, and the **SHA-256 of the policy file** that made the decision —
+so any log reader can tell exactly which policy version authorized each
+exec. Phase 2 adds request/approval/result events to the same stream.
 
 ### 8.2 Sinks (separated, by who can write them)
 
 - **`sy`-side events → journald** (native API; identifier `sysh`). The
   journal attaches kernel-trusted `_UID`, `_PID`, `_EXE` that the `sy` UID
   cannot forge. **Fail closed:** if the journal write fails, the exec is
-  denied.
+  denied. Journal rate limiting and vacuuming can drop messages silently,
+  though; `doctor` surfaces the lost-message counters, and off-host
+  forwarding (§8.3) is the real detection.
 - **Root-side events (phase 2: approvals, root executions) →
   `/var/log/sysh/root.log`**, root:root 0600, **hash-chained** (each entry
   includes the hash of the previous). `sy` has no write handle on it at all.
@@ -353,9 +421,11 @@ questions — "which other servers were touched during this incident?" — are
 answered by correlating the `sysh` identifier across hosts in that stack.
 `sysh audit tail` (root) gives the local view.
 
-### 8.4 auditd integration (opt-in, kernel-attested)
+### 8.4 auditd integration (kernel-attested; mandatory in permissive mode)
 
-The package can install auditd rules scoped to the `sy` UID, keyed `sysh`:
+The package installs auditd rules scoped to the `sy` UID (debconf opt-in,
+default yes when auditd is present; **`policy install` refuses a
+permissive policy when they are not active**, §6.6), keyed `sysh`:
 `execve`, write-class syscalls (`open`, `openat`, `creat`, `rename`,
 `unlink`, …), and **`connect`** (destination addresses). This answers
 "which files did it create or modify, which hosts did it contact" **at
@@ -376,31 +446,38 @@ Design principle: **approval chooses *when*; the root-owned policy chooses
 token to steal, replay, or transport.
 
 1. The agent execs an argv matching a `privileged` rule. The gateway writes
-   a **request file** into `/var/spool/sysh/requests/` (a `sy`-writable
-   directory whose contents are *untrusted data*): argv, fingerprint,
+   a **request file** into `/run/sysh/requests/` (the `root:sy 0730` drop
+   box of §4.2; its contents are *untrusted data*): argv, fingerprint,
    key id (claimed label), timestamp, request id. Strict grammar,
-   size-capped, ASCII-only. The client receives exit 30 + the request id on
-   stderr and should report and stop (the MCP contract says the same, §10).
+   size-capped, ASCII-only, bounded by the request lockout (§9.3). The
+   client receives exit 30 + the request id on stderr and should report
+   and stop (the MCP contract says the same, §10).
 2. A human, interactively on the server:
 
 ```console
 root@server:~# sysh approvals
 req_a1b2c3  argv=["systemctl","restart","nginx"]  key=sysh-agent/server.example  age=12s
 root@server:~# sysh approve req_a1b2c3
-confirm (8 chars): 3f9a2c1e_
+type the pattern-chosen argument: nginx_
 ```
 
    `sysh approve` (root; stdin must be a real TTY — pipes are refused):
-   opens the request with `O_NOFOLLOW`, size-limits and parses it with a
-   strict grammar, **re-checks the argv against the policy's `privileged`
-   rules itself** (an operator cannot approve anything policy forbids),
-   displays the full argv and absolute path plus a short confirmation code
-   (first 8 hex of the NUL-delimited argv hash — binding the confirmation
-   to the *whole* argv), requires that code to be typed, then **executes
+   opens the request via the spool's safe pattern (`openat` +
+   `O_NOFOLLOW|O_NONBLOCK` — a planted FIFO must not hang the approver —
+   then `fstat`: regular file, `st_nlink == 1`, size-capped), parses it
+   with a strict grammar, **re-checks the argv against the policy's
+   `privileged` rules itself** (an operator cannot approve anything policy
+   forbids), and requires the human to **type the pattern-matched
+   arguments themselves** — the unit name, the path, whatever the policy's
+   patterns chose; that is the only attacker-influenced content in the
+   request. A fully literal rule needs only a yes/no. It then **executes
    from the same in-memory copy it displayed**, under a one-shot
    `systemd-run` unit (clean environment, cgroup, `TasksMax`, `MemoryMax`,
-   timeout). The result is written root-side; the agent fetches it
-   read-only via `sysh-result req_…` (TTL'd, then removed).
+   timeout). The result is written root-side (`root:sy 0750`); the agent
+   fetches it read-only via `sysh-result req_…` (TTL'd, then removed).
+   Raw command output is never streamed to the approver's terminal — it
+   is attacker-influenced text; it lives in the result file, and any
+   display is escaped.
 3. Request hygiene: identical live requests (same argv hash) are deduped;
    more than 5 live pending requests refuse new ones until approved or
    expired (default request TTL 10 min) — the approval-fatigue counter
@@ -466,7 +543,11 @@ of §4.3.
   mode — anything, but only as unprivileged `sy`.
 - **P2** — the agent cannot modify its policy, authorized_keys, key map,
   request state, root-side results, or root-side audit; and cannot forge
-  its own audit record (journald kernel attestation).
+  an audit record *attributed to the gateway binary* without code
+  execution inside the gateway process itself (journald attests
+  `_EXE`/`_UID`/`_PID`; consumers filter on `_EXE=/usr/bin/sysh`;
+  `DUMPABLE=0` and the ptrace checks raise the bar; auditd is the
+  independent kernel-level source).
 - **P3** — **no process in the agent tree can gain privileges** (NNP,
   kernel-enforced) — including via any setuid binary or sudoers line
   elsewhere on the host.
@@ -487,8 +568,9 @@ of §4.3.
   harness-level malware cannot reach the control channel. Remaining:
   malware running *as the operator user* can drive an `ssh -t` approval
   session (a local TTY can be synthesized and fed). Mitigations: typed
-  full-argv confirmation code, request dedup, lockout, hash-chained root
-  audit. Full closure = FIDO2-signed approvals (§9, future).
+  pattern-argument confirmation (§9), request dedup, lockout,
+  hash-chained root audit. Full closure = FIDO2-signed approvals (§9,
+  future).
 - **R2 — approval fatigue.** Dedup, short request TTL, typed confirmation,
   lockout. Bounded, not eliminated.
 - **R3 — policy authoring errors.** The linter (patterns, paths,
@@ -496,7 +578,11 @@ of §4.3.
   rule that is technically safe and operationally unwise.
 - **R4 — one UID, many agents.** Key identity is attribution, not
   isolation: agent keys share signals, `/proc`, `/tmp`, and the filesystem
-  namespace.
+  namespace. The consequence: same-UID code (trivially available in
+  permissive mode, or after a bug in an allowed tool) can tamper with a
+  gateway process where Yama's `ptrace_scope` permits it — mitigated by
+  `DUMPABLE=0` (§6.7), the `ptrace_scope` doctor check, and the mandatory
+  auditd requirement in permissive mode (§6.6), but not eliminated.
 - **R5 — output exfiltration.** Command output flows to the agent and its
   model provider (§8.5). Disclosed, not prevented.
 - **R6 — infrastructure trust.** systemd (scopes, journald), auditd, and
@@ -549,6 +635,28 @@ Partial deviations, for the reviewers' attention:
 - **Signature removal goes further** than the review's "reconsider"
   (rationale in §12).
 
+### v2 → v3 (second review)
+
+| Finding | Resolution |
+|---|---|
+| "Cannot forge its audit record" overstated (same-UID ptrace; journal drops) | P2 reworded to binary-attribution (§11); `DUMPABLE=0` + `ptrace_scope` doctor check (§6.7); policy SHA-256 in every event (§8.1); drop counters surfaced (§8.2); auditd mandatory in permissive mode (§6.6) |
+| `keys.map` 0600 unreadable by the gateway | 0644 — the mapping is not secret (§4.3) |
+| Spool `root:root 0730` not `sy`-writable; FIFO/hardlink planting; §6.5 contradicted §9 | `root:sy 0730` drop box in volatile `/run`; safe open pattern (`openat`, `O_NOFOLLOW\|O_NONBLOCK`, `S_ISREG`, `st_nlink == 1`, size caps); §6.5 states the narrow exception (§4.2, §6.5, §9) |
+| `/run` is tmpfs — postinst-created dirs vanish | tmpfiles.d; spool deliberately volatile (§4.2) |
+| `systemd-run --scope` as `sy` needs the user manager | `--user --scope`, sanitized unit names, doctor verifies PAM/user-manager/delegation, marked fallback (§6.7) |
+| Own example violated own linter; proof of no-leading-`-` non-trivial | restricted pattern grammar + first-character set from the RE2 tree (§6.2) |
+| `$SSH_USER_AUTH` ownership unverified | implementation note: verify on target OpenSSH, read first, cross-check sshd's Accepted-publickey line (§5) |
+| Permissive mode: IMDS, lateral movement, kernel exploits | honest "disposable host" wording; mandatory auditd; opt-in owner-match IMDS block for cloud hosts (§6.6) |
+| Persistence outside the gateway (cron/at/user units/linger) | linter denylist + doctor tripwires + scope killed on session drop (§6.6, §6.7, §7) |
+| Deny rules exact-length; denylist by `argv[0]` misses aliases | deny prefix semantics; denylist on realpath+basename; `ack = true` warning class for write/net tools (§6.2, §7) |
+| Journal reading vs no-supplementary-groups conflict | documented opt-in: `systemd-journal` group only, never `adm`/`docker`/`sudo` (§4.2) |
+| 8-hex confirmation is copy-paste | type the pattern-matched arguments; fully literal rules are yes/no; output never streamed raw to the approver (§9) |
+
+Softened deliberately (operator's call — this is a sysadmin's daily-use
+tool, not a vault): the IMDS block stays opt-in documentation (the primary
+deployment target is on-prem VMs with no metadata service), and off-host
+forwarding remains a recommendation rather than a requirement.
+
 ## 14. Implementation plan (post-review)
 
 **Phase 1 — base tier + observability:**
@@ -570,10 +678,14 @@ hash-chained root log, dedup/TTL/lockout.
 
 **Before any release:**
 
-- Tests: option injection through every wildcard position; symlink and
-  race attempts in every `sy`-writable path; terminal-escape argv; policy
-  TOCTOU; sshd drop-in rollback on a bad config; NNP under a hostile
-  setuid; cgroup-kill on forked children.
+- Tests: option injection through every wildcard position; symlink, FIFO,
+  and hardlink planting in every `sy`-writable path; terminal-escape argv;
+  policy TOCTOU; sshd drop-in rollback on a bad config; NNP under a
+  hostile setuid; cgroup-kill on forked children; a same-UID `ptrace`
+  attempt against the gateway; behaviour after reboot (tmpfiles.d
+  recreating the volatile state); a user manager that is not running
+  (fallback path); IMDS reachability from `sy` where the block is
+  installed; persistence attempts via `crontab`, `at`, and user units.
 - Independent review of the **sshd drop-in, package scripts, and auditd
   rules** — not just the Go code; that is where lockout and privilege
   mistakes live.
