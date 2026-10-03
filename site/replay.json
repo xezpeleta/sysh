@@ -629,7 +629,8 @@
    "t": 3600,
    "d": 230,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/systemctl restart mariadb'\" }"
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/systemctl restart mariadb'\", exit: 125 }",
+   "err": true
   },
   {
    "t": 5300,

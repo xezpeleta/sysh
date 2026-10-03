@@ -207,7 +207,13 @@
       var call = calls[i];
       var done = simTime >= call.t + call.d;
       var line = node('div', 'pi-replay__call');
-      line.appendChild(node('span', done ? 'pi-replay__ok' : 'pi-replay__running', done ? '✓' : '…'));
+      // sysh-site extension: an "err": true call resolves to a red x
+      // instead of a check mark (e.g. a command refused by policy).
+      var glyph, mark;
+      if (!done) { glyph = '…'; mark = 'pi-replay__running'; }
+      else if (call.err) { glyph = '✗'; mark = 'pi-replay__err'; }
+      else { glyph = '✓'; mark = 'pi-replay__ok'; }
+      line.appendChild(node('span', mark, glyph));
       line.appendChild(document.createTextNode(' ' + call.name + ' '));
       line.appendChild(node('span', 'pi-replay__muted', call.args));
       if (done) line.appendChild(node('span', 'pi-replay__dim', ' ' + formatDuration(call.d)));

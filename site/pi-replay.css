@@ -314,3 +314,8 @@ html[data-theme="dark"] .pi-replay {
 .pi-replay .pi-replay__button {
   color: var(--pi-accent);
 }
+
+/* sysh-site extension: refused/failed tool call marker */
+.pi-replay .pi-replay__err {
+  color: var(--red, #bd3b33);
+}
