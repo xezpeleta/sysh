@@ -17,12 +17,12 @@ in over plain SSH as an unprivileged system user whose **login shell**:
   logs (journald, auditd) the agent cannot forge or erase;
 - **can delimit** — enforce a strict allow-list of exact commands, matched
   on the literal argv with no shell semantics behind it;
-- **cannot elevate, ever** — every process it spawns runs under
+- **does not elevate by default** — every process it spawns runs under
   `PR_SET_NO_NEW_PRIVS`: setuid and sudo are kernel-disabled for the entire
-  agent tree, whatever else lives on the host;
-- **waits for humans on root work** — when a command genuinely needs root,
-  the agent records a request and stops; a human reviews it *on the server*
-  and the human's tool — not the agent — executes it (phase 2).
+  agent tree, whatever else lives on the host. Root work is possible only
+  through **operator-written `privileged` rules**: exact-argv sudo grants
+  the operator generates and validates at policy install (phase 1.5), or —
+  phase 2 — a request queue a human approves *on the server*.
 
 Control lives **on the server**. Not in the agent's harness, not in prompt
 instructions, not in a management plane. The agent cannot talk its way past
@@ -43,12 +43,14 @@ a shell.
 - **Zero elevation surface.** The base install has no sudoers line, no
   setuid helper, no daemon, no tokens — nothing that can raise privileges.
   `no_new_privs` makes that a kernel property for the whole agent process
-  tree.
-- **Human-gated root work (phase 2).** Approval happens interactively on
-  the server: the human sees the host-recorded argv, re-checks it against
-  policy, types a confirmation code bound to the *entire* argv, and the
-  approve command itself executes it. There is no bearer token to steal,
-  replay, or leak.
+  tree; the only elevation surface is the sudoers fragment `policy install`
+  generates, root-owned and limited to the operator's chosen exact argv.
+- **Human-gated root work (phase 2).** For root argv the operator did
+  *not* pre-authorize as privileged rules: approval happens interactively
+  on the server — the human sees the host-recorded argv, re-checks it
+  against policy, types a confirmation code bound to the *entire* argv,
+  and the approve command itself executes it. There is no bearer token to
+  steal, replay, or leak.
 - **A permissive mode** for snapshot-protected experimentation: the agent
   runs anything it likes — as the unprivileged user, NNP-bit set, every
   argv journaled. Unlimited for the agent, fully recorded for you. Never
@@ -91,8 +93,14 @@ root@server:~# sysh audit tail
 root@server:~# journalctl -t sysh --since -1h        # kernel-attested
 root@server:~# ausearch -k sysh --start today        # files touched, hosts contacted
 
-# a command that needs root (phase 2 design):
+# a command that needs root — operator pre-authorized it as a
+# privileged rule (phase 1.5: exact-argv sudo grant, PRIV event, and
+# sudo's own journal line as a second record):
 $ ssh -i … sy@server.example 'systemctl restart nginx'
+[runs as root via sudo, events carry PRIV=true]
+
+# root work the operator did NOT pre-authorize (phase 2 design):
+$ ssh -i … sy@server.example 'systemctl restart postgresql'
 approval_required: req_a1b2c3 (report this id; a human must approve it)
 root@server:~# sysh approve req_a1b2c3
 argv=["systemctl","restart","nginx"]   path=/usr/bin/systemctl

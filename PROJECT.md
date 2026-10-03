@@ -27,23 +27,30 @@ is an unprivileged system user whose login shell:
   kernel-attested sinks the agent cannot forge;
 - **can delimit** — enforce a strict allow-list of exact commands (argv
   matching, no shell semantics, fixed absolute paths, scrubbed environment);
-- **never elevates** — no process in the agent's tree can gain privileges
-  (`PR_SET_NO_NEW_PRIVS`, kernel-enforced). When a command genuinely needs
-  root, a *human* approves it on the server, and the human's tool — not the
-  agent — executes it (§9, phase 2).
+- **elevates only what the operator wrote down, one argv at a time** —
+  by default no process in the agent's tree can gain privileges
+  (`PR_SET_NO_NEW_PRIVS`, kernel-enforced). Root work needs a
+  `privileged = true` rule: `policy install` then generates an exact-argv
+  sudoers grant (phase 1.5, §6.8) — root power, but only for argv the
+  operator pre-authorized, doubly recorded (gateway event with `PRIV=true`
+  plus sudo's own journal line). Per-command human approval remains the
+  phase-2 design (§9).
 
-Phase 1 delivers the record and the delimiting. Elevation-through-approval is
-phase 2, sequenced deliberately so the harder security surface ships only
-after the base is reviewed in production.
+Phase 1 delivered the record and the delimiting. Phase 1.5 added
+operator-pre-authorized root exec through generated sudo grants. The
+approval queue (§9) is sequenced deliberately so the harder interactive
+surface ships only after the base is reviewed in production.
 
 ## 2. Non-goals
 
 - **Not a sandbox.** The agent runs real commands on the real host as a real
   unprivileged user. No chroot, namespaces, or microVMs.
-- **Not root-without-approval.** Shops that want an unrestricted root agent
-  are out of scope. The closest `sysh` offers is *permissive mode* (§6.6):
-  unlimited as the unprivileged `sy` user, fully recorded, rollback via your
-  existing snapshots — never root.
+- **Not unrestricted root.** Shops that want an anything-goes root agent
+  are out of scope. `sysh` root power is always a closed list of exact argv
+  the operator wrote into a `privileged` rule — never a shell, never
+  `rest`, never a pattern. For unstructured room the closest is
+  *permissive mode* (§6.6): unlimited as the unprivileged `sy` user, fully
+  recorded, rollback via your existing snapshots — still not root.
 - **Not monitoring or a SIEM.** `sysh` emits structured, attributable events
   (journal, auditd); shipping and correlating them is your existing stack's
   job.
@@ -72,7 +79,9 @@ One static Go binary on the server, behaving by role:
 │    ▼ (key fingerprint)                  │ systemd-run scope per exec  │
 │  /etc/sysh/keys.map (root)              │ env scrub, rlimits, cgroup  │
 │                                         ▼                             │
-│                            child runs as unprivileged sy, NNP-bit set │
+│    child runs as unprivileged sy, NNP-bit set — or, for a           │
+│    privileged rule, as root via the operator's exact-argv sudo       │
+│    grant (NNP off for that gateway, §6.8)                           │
 │                                         │                             │
 │                            journald ← every decision, kernel-attested │
 │                              (_UID/_PID/_EXE — sy cannot forge)       │
@@ -285,7 +294,9 @@ serves the snapshot-protected "give it room, keep the record" workflow —
 understood honestly as **arbitrary code as `sy` on a host you consider
 disposable**: it can reach local services, world-readable secrets, other
 hosts, and (on cloud VMs) the instance metadata endpoint. It never grants
-root; `privileged` rules in permissive mode behave as in §9.
+root; `privileged` rules in permissive mode are a lint error
+(root-equivalent exec must not be possible while anything else runs
+unchecked).
 
 Two consequences follow:
 
@@ -314,7 +325,11 @@ Every child exec:
   re-exec — the flag is per-thread in Linux). Setuid and sudo become
   unusable for the entire agent tree, on both tiers, regardless of host
   configuration. "No elevation surface" is a kernel property, not a claim
-  about config files.
+  about config files. **Exception, phase 1.5:** a policy containing
+  `privileged` rules is the one sanctioned elevation surface — the gateway
+  then starts *without* NNP (sudo needs setuid) and the linter refuses
+  setuid binaries on non-privileged allow rules in such a policy, so no
+  other path to setuid exists. With zero privileged rules nothing changes.
 - the gateway itself calls `prctl(PR_SET_DUMPABLE, 0)` at startup, so
   same-UID processes cannot `ptrace` it or write its `/proc/<pid>/mem`
   (children re-enable dumpable on exec). `doctor` checks
@@ -329,10 +344,47 @@ Every child exec:
   `scope=false` marked in the event.
 - has output capped; on timeout the scope is killed (exit 124), and when
   the SSH session drops the gateway kills the scope too (SIGHUP/SIGPIPE)
-  so nothing outlives its session.
+  so nothing outlives its session. **Privileged children (phase 1.5):**
+  the user manager runs as uid `sy` and *cannot signal root processes*
+  (verified live: `EPERM`), so privileged timeouts are enforced by the
+  sudoers `TIMEOUT=<rule timeout>` tag — sudo, running as root, kills its
+  own child — and the gateway waits a short grace for sudo to exit before
+  killing the scope, so killing sudo first cannot orphan the root child.
 
 Multiple agent keys share one UID: key identity is **attribution, not
 isolation** (R4).
+
+### 6.8 Privileged execution (phase 1.5)
+
+A rule with `privileged = true` runs as root, through sudo, under
+guardrails that keep the argv list closed:
+
+- **The grant is generated, never hand-written.** `sysh policy install`
+  renders `/etc/sudoers.d/60-sysh` (0440 root:root) from the policy —
+  one `sy ALL=(root) TIMEOUT=<n> NOPASSWD: <argv>` line per privileged
+  rule, prefixed with `Defaults:sy !setenv` — validates it with
+  `visudo -cf` *before* writing anything, and removes the fragment when
+  the last privileged rule disappears. The policy is the single source
+  of truth; drift is a doctor failure.
+- **sudo ≥ 1.9.13 is required** (per-command `TIMEOUT`, the only
+  reliable privileged-timeout enforcer — see §6.7). `policy install`
+  refuses otherwise.
+- **The gateway wraps the exec**: `[sudo, -n, --, <path>, <args…>]`,
+  still inside the systemd scope, still output-capped, env still
+  scrubbed. `-n` means a missing grant fails rather than prompting.
+- **Double record**: sysh events carry `PRIV=true` with the agent's
+  argv, key id, and rule index; sudo's own journal entry (invoking uid,
+  command, tty) is written by a different code path the agent cannot
+  influence.
+- **Linter guardrails**: `ack = true` and an explicit `timeout` are
+  mandatory; `rest` and whitespace inside argv elements are forbidden
+  (sudoers grants are exact argv strings); permissive mode +
+  privileged is refused outright; setuid binaries on non-privileged
+  allow rules are refused while any privileged rule exists (NNP is off,
+  so nothing else may reach setuid).
+- **Honest cost**: while such a policy is installed the gateway starts
+  without NoNewPrivs. That is the whole trade: containment is weakened
+  to exactly the operator's chosen argv, observability stays total.
 
 ## 7. Policy
 
@@ -360,7 +412,9 @@ deny = true
 [[rule]]
 argv = ["systemctl", "restart", "nginx|unifi"]
 path = "/usr/bin/systemctl"
-privileged = true             # phase 2: never executed by the agent (§9)
+privileged = true             # executed as root via the operator's
+                              # exact-argv sudo grant (§6.8); ack and an
+                              # explicit timeout are mandatory
 ```
 
 - `sysh policy install` (root) **runs the linter and refuses on any
@@ -412,7 +466,7 @@ exec. Phase 2 adds request/approval/result events to the same stream.
   denied. Journal rate limiting and vacuuming can drop messages silently,
   though; `doctor` surfaces the lost-message counters, and off-host
   forwarding (§8.3) is the real detection.
-- **Root-side events (phase 2: approvals, root executions) →
+- **Root-side events (phase 2 approvals; phase 1.5 sudo lines) →
   `/var/log/sysh/root.log`**, root:root 0600, **hash-chained** (each entry
   includes the hash of the previous). `sy` has no write handle on it at all.
 - No shared writable audit file exists. (The v1 design's single
@@ -445,11 +499,29 @@ Command output — including phase-2 root command output — flows to the agent
 and, for LLM agents, to its model provider. Documented to approval holders;
 operators should assume outputs are externally observable.
 
-## 9. Privileged operations (phase 2 — approve-executes)
+## 9. Privileged operations
 
-Design principle: **approval chooses *when*; the root-owned policy chooses
-*what*.** The agent never executes a privileged argv; there is no bearer
-token to steal, replay, or transport.
+Two mechanisms, one invariant: **root argv are a closed, root-owned list.**
+
+- **Phase 1.5 — operator pre-authorization (shipped).** A `privileged`
+  rule plus `policy install` produces an exact-argv
+  `sy ALL=(root) TIMEOUT=<n> NOPASSWD: <argv>` grant in
+  `/etc/sudoers.d/60-sysh`, `visudo`-validated, regenerated on every
+  install, removed when the last privileged rule goes. The gateway execs
+  `sudo -n -- <argv>`; events carry `PRIV=true` and sudo's own journal
+  line (with the invoking uid) is an independent second record. The
+  linter mandates `ack = true` + explicit `timeout`, forbids `rest` and
+  whitespace inside argv elements, and refuses permissive+privileged.
+  This trades the strict containment of an always-NNP tree for
+  observability: every root exec still names the key, argv, rule, and
+  outcome.
+- **Phase 2 — approve-executes (design below).** For root work the
+  operator did *not* pre-authorize.
+
+Design principle for phase 2: **approval chooses *when*; the root-owned
+policy chooses *what*.** The agent never executes a privileged argv that
+policy did not pre-authorize; there is no bearer token to steal, replay,
+or transport.
 
 1. The agent execs an argv matching a `privileged` rule. The gateway writes
    a **request file** into `/run/sysh/requests/` (the `root:sy 0730` drop
@@ -626,7 +698,7 @@ v1 was externally reviewed. Disposition of the findings:
 
 | Finding | Resolution |
 |---|---|
-| `sy` could reach `sysh-exec` directly via sudo, bypassing all gateway controls | **Accepted, redesign.** Approve-executes model (§9); NNP on the whole agent tree (§6.7); sysh-exec/sudoers/tokens deleted (§12) |
+| `sy` could reach root exec via sudo, bypassing gateway controls | **Redesigned in phase 1.5.** The only sudoers entry for `sy` is the root-owned fragment `policy install` generates — exact argv, `TIMEOUT`, `NOPASSWD` only; no shells, no wildcards, `!setenv`. NNP stays on the whole agent tree whenever the policy has no privileged rules (§6.7); the linter blocks setuid allow-rules otherwise |
 | Matcher over-broad (`len >=`, intra-word `*`, `--option=value` injection); deny/first-match contradiction; PATH search; env not scrubbed | **Accepted.** Exact length + anchored patterns that cannot match leading `-` (§6.2); deny-first (§6.2); absolute paths + scrubbed env (§6.2); mandatory linter with escape-hatch denylist (§7) |
 | Audit log forgeable by `sy`; "+a" unreliable; "tamper-evident" claim unsupported | **Accepted.** Sinks split: journald (kernel-attested) for `sy`-side, root-only hash-chained file for root-side; fail closed (§8.2) |
 | Approval step weak (argv[0] rubber stamp; Unicode display attacks; no dedup) | **Accepted.** Full-argv confirmation code; ASCII-only argv at the gateway (§6.1); dedup by argv hash (§9.3) |
