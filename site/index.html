@@ -221,8 +221,9 @@ $ journalctl -t sysh -o verbose | grep -E 'KEYID|ARGV|PRIV|DECISION'
     policy plus ordinary OS permissions (groups, ACLs, ownership) shapes
     access like <em>“read the web server's logs and config, write the
     enumerated files, validate and reload”</em>.</li>
-    <li><strong>Debian / Ubuntu</strong> today; designed for the KVM-era
-    fleet where journald and auditd are already there.</li>
+    <li><strong>Debian / Ubuntu</strong> today; it needs nothing beyond
+    what a stock server already runs — journald and auditd are already
+    there.</li>
   </ul>
 </section>
 
