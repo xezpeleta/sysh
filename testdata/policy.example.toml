@@ -1,0 +1,91 @@
+# sysh example policy (§7). Install with:
+#   sysh policy install < policy.example.toml
+#
+# argv is the unit of trust: rules match exact argv length unless a
+# `rest` pattern is given. A position containing \ | ( ) [ ] { } * + ?
+# is a restricted RE2 pattern (anchored); everything else is a literal.
+
+version = 2
+host = "example-host"
+mode = "enforcing"          # enforcing | permissive (permissive: auditd mandatory)
+
+# --- the canonical allow: read-only service status
+[[rule]]
+argv = ["/usr/bin/systemctl", "status", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+timeout = 30
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "is-active", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+timeout = 15
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "list-units"]
+path = "/usr/bin/systemctl"
+timeout = 30
+
+# --- logs (opt-in rest pattern; note the two-position form that can
+# never match a leading '-')
+[[rule]]
+argv = ["/usr/bin/journalctl", "-u"]
+path = "/usr/bin/journalctl"
+rest = "[a-z0-9@._][a-z0-9@._\\-]*"
+timeout = 60
+
+[[rule]]
+argv = ["/usr/bin/journalctl", "--disk-usage"]
+path = "/usr/bin/journalctl"
+timeout = 30
+
+# --- disk / process inspection
+[[rule]]
+argv = ["/usr/bin/df", "-h"]
+path = "/usr/bin/df"
+timeout = 15
+
+[[rule]]
+argv = ["/usr/bin/free", "-h"]
+path = "/usr/bin/free"
+timeout = 15
+
+[[rule]]
+argv = ["/bin/ps", "aux"]
+path = "/bin/ps"
+timeout = 15
+
+# --- misc read-only tooling
+[[rule]]
+argv = ["/usr/bin/uptime"]
+path = "/usr/bin/uptime"
+timeout = 15
+
+[[rule]]
+argv = ["/usr/sbin/dmesg", "-T"]
+path = "/usr/sbin/dmesg"
+timeout = 30
+
+# --- file writers / network tools need an explicit ack (warning class)
+[[rule]]
+argv = ["/usr/bin/curl", "-fsSL"]
+path = "/usr/bin/curl"
+rest = "https://[a-z0-9][a-z0-9./_\\-]*"
+timeout = 60
+ack = true                   # acknowledged: curl writes files / opens connections
+
+# --- deny rules: prefix semantics, checked before every allow
+[[rule]]
+argv = ["find"]
+deny = true
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "--user"]
+deny = true                  # user-unit persistence
+
+# --- phase 2 preview: privileged rules never execute without a human
+# approving the exact argv; on a phase-1 build they are refused (126).
+# [[rule]]
+# argv = ["/usr/bin/systemctl", "restart", "nginx"]
+# path = "/usr/bin/systemctl"
+# privileged = true
+# timeout = 30

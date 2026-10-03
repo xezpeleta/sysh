@@ -665,6 +665,15 @@ forwarding remains a recommendation rather than a requirement.
 
 ## 14. Implementation plan (post-review)
 
+> **Status: phase 1 implemented** (single commit history in this repo;
+> unit-tested through the sshd boundary; VM e2e pending). Notable
+> implementation deviations from this plan, all deliberate:
+> no debconf (auditd rules auto-install when present, journal-group is
+> a manual subcommand), gateway accepts any non-root uid (the sy↔shell
+> binding is enforced by packaging + doctor, which keeps dev hosts and
+> tests honest), `auth add` takes the key from stdin and the key id
+> from the key comment.
+
 **Phase 1 — base tier + observability:**
 
 1. `sysh` gateway: shell mode, ASCII argv, hardened matcher, permissive

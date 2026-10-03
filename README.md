@@ -138,14 +138,79 @@ externally observable by its provider, which the docs say out loud.
 
 ## Status
 
-**Design phase — v3, post-review.** The specification in
-[PROJECT.md](PROJECT.md) has been through two external security review
-rounds; all critical findings are folded in and dispositioned in its §13.
-Implementation language: **Go** (one static binary, no runtime
-dependencies — see PROJECT.md §3). Phase 1 (base tier + observability) is
-the implementation target; elevation (phase 2) ships only after phase 1
-is reviewed in production. No code has been written yet.
+**Phase 1 implemented.** The specification in [PROJECT.md](PROJECT.md)
+has been through two external security review rounds (dispositions in
+its §13). What exists today, in this repo:
+
+- **`/usr/bin/sysh`** — one static Go binary, both sides of the system:
+  the gateway (login-shell mode, `sysh -c '<command>'`) and the root
+  control subcommands (`sysh auth`, `sysh policy`, `sysh audit`,
+  `sysh doctor`, `sysh lockdown`).
+- **Gateway (§6):** argv-is-the-unit-of-trust parsing (printable ASCII,
+  no shell semantics), restricted pattern grammar with linter-computed
+  first-character sets (option-injection-proof), deny rules with prefix
+  semantics, exact-length allow rules with opt-in `rest`, permissive
+  mode (deny rules still apply), builtins (`sy-docs`, `sy-policy`),
+  `PR_SET_NO_NEW_PRIVS` + `PR_SET_DUMPABLE=0` + rlimits + umask 0077,
+  scrubbed environment, 1 MiB/stream output cap, timeouts, session-drop
+  kill, systemd `--user` scopes with TasksMax/MemoryMax (with fallback),
+  lockdown tripwire, and a fail-closed pre-exec journald event — if the
+  audit record cannot be written, the exec does not happen.
+- **Events (§8):** pure-Go journald sender (`SYSLOG_IDENTIFIER=sysh` +
+  structured fields: key id, fingerprint, argv JSON, decision, rule,
+  exit, duration, scope, policy SHA-256, mode, phase, truncation), plus
+  a `sysh audit tail` viewer. auditd rules for the agent UID ship in the
+  deb and install automatically when auditd is present.
+- **Control plane (§4.3):** `sysh auth add/list/remove` (restrict-only
+  keys, fingerprint-bound ids), `sysh policy install/lint` (mandatory
+  linter: denylist on realpath+basename, pattern safety, path ownership
+  checks, warning class with per-rule `ack`, permissive-mode auditd
+  gate), `sysh doctor` (~20 effective-configuration checks), `sysh
+  lockdown`, `sysh journal-group`.
+- **Packaging:** `debian/` + `build.sh` produce a self-contained `.deb`
+  (user setup, tmpfiles.d, sshd drop-in with `sshd -t` validation and
+  rollback, auditd rules with UID substitution, `Match all` terminator).
+
+Phase 2 (approval queue, privileged execution, `sysh-result`) and the
+`sysh-mcp` distribution are intentionally deferred until phase 1 is
+reviewed in production. Privileged rules parse, lint, and are refused
+at runtime with exit 126 — the hooks are in place.
+
+### Build & try it
+
+```sh
+make test        # unit tests (pattern analysis, matcher, linter, loader, gateway)
+make smoke       # local binary checks (NNP/DUMPABLE selfcheck, fail-closed paths)
+make deb         # dist/sysh_<version>_amd64.deb
+```
+
+Install on a Debian/Ubuntu host (VM recommended for the first one):
+
+```sh
+sudo apt install ./dist/sysh_*_amd64.deb   # sets up user, dirs, sshd, auditd
+sudo sysh auth add                          # paste: restrict ssh-ed25519 AAAA… agent-name
+sudo sysh policy install < /usr/share/sysh/policy.example.toml
+sudo sysh doctor
+```
+
+Then point the agent's SSH client at the `sy` user with the registered
+key. Every session is `sysh -c '<command>'`; the agent speaks commands,
+the shell speaks policy.
+
+### Honest limits of the current code
+
+- Same-UID tampering: the `sy` user could in principle replace its own
+  session's view of files it can write. All gateway-read state
+  (policy, keys.map, docs) is root-owned and verified as such at every
+  open; `PR_SET_DUMPABLE=0` plus `yama.ptrace_scope>=1` (doctor-checked)
+  close the ptrace route.
+- The journald socket has no per-message ack: the fail-closed pre-exec
+  write detects a dead socket, not journal-side suppression. Drop
+  counters are surfaced by `doctor` (`journal drops` check).
+- e2e on a real VM (sshd binding, scopes, auditd) is the remaining
+  pre-release item; the local suite covers everything up to the sshd
+  boundary.
 
 ## License
 
-MIT (see `LICENSE` once code lands).
+MIT — see `LICENSE`.

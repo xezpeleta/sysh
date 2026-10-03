@@ -1,0 +1,23 @@
+#!/bin/bash
+# sysh postrm: remove host-local state on purge. Configuration and
+# policies survive a remove (they are operator-owned data).
+set -eu
+
+case "${1:-}" in
+  purge)
+    # Take the agent channel out of sshd first.
+    rm -f /etc/ssh/sshd_config.d/60-sysh.conf
+    if command -v sshd >/dev/null 2>&1 && sshd -t 2>/dev/null; then
+      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    fi
+    rm -f /etc/audit/rules.d/60-sysh.rules
+    augenrules --load >/dev/null 2>&1 || true
+    # Operator data (keys, policy, docs) is removed on purge.
+    rm -rf /etc/sysh
+    rm -rf /run/sysh /run/sysh-tripwire
+    # Keep the sy user: it may still own files; the operator removes it
+    # with `userdel sy` if desired.
+    sed -i '\#^/usr/bin/sysh$#d' /etc/shells 2>/dev/null || true
+    ;;
+esac
+exit 0

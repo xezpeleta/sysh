@@ -1,0 +1,13 @@
+Package: sysh
+Version: __VERSION__
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: xezpeleta <xezpeleta@users.noreply.github.com>
+Description: login shell for AI agents on servers
+ sysh gives AI agents a safe, observable channel to operate a single
+ server: the agent connects as the unprivileged `sy` user over SSH and
+ its login shell enforces an operator-written argv policy. No shell
+ semantics, no tokens, all enforcement and recording server-side.
+Depends: systemd
+Suggests: auditd, openssh-server

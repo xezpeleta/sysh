@@ -1,0 +1,381 @@
+package gateway
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/xezpeleta/sysh/internal/audit"
+)
+
+// testConfig builds a Config wired to a temp policy environment.
+func testConfig(t *testing.T, policyDoc string) (Config, *audit.Recorder, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+	dir, err := os.MkdirTemp(cacheBase(t), "sysh-gw-*")
+	if err != nil {
+		t.Skipf("cannot create test dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	policyPath := filepath.Join(dir, "policy.toml")
+	if err := os.WriteFile(policyPath, []byte(policyDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// directory ancestors must satisfy the fail-closed loader
+	// (cache dir is user-owned, not world-writable).
+
+	keysMap := filepath.Join(dir, "keys.map")
+	os.WriteFile(keysMap, []byte(""), 0o644)
+	docsDir := filepath.Join(dir, "docs")
+	os.MkdirAll(docsDir, 0o755)
+
+	var stdout, stderr bytes.Buffer
+	rec := &audit.Recorder{}
+	cfg := Config{
+		PolicyPath:  policyPath,
+		KeysMapPath: keysMap,
+		DocsDir:     docsDir,
+		Tripwire:    filepath.Join(dir, "tripwire"), // does not exist
+		HomeDir:     dir,
+		PolicyOwner: os.Getuid(),
+		Sink:        rec,
+		Scopes:      false, // no systemd-run in unit tests
+		Stdin:       strings.NewReader(""),
+		Stdout:      &stdout,
+		Stderr:      &stderr,
+		Getenv:      func(string) string { return "" },
+		Now:         time.Now,
+	}
+	return cfg, rec, &stdout, &stderr
+}
+
+func cacheBase(t *testing.T) string {
+	t.Helper()
+	base, err := os.UserCacheDir()
+	if err != nil {
+		t.Skipf("no cache dir: %v", err)
+	}
+	return base
+}
+
+const execPolicy = `
+version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/bin/echo"]
+path = "/bin/echo"
+rest = "[a-zA-Z0-9@._\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "status", "[a-z-]+"]
+path = "/usr/bin/systemctl"
+timeout = 30
+
+[[rule]]
+argv = ["find"]
+deny = true
+`
+
+func TestRunExecChild(t *testing.T) {
+	cfg, rec, stdout, stderr := testConfig(t, execPolicy)
+	code := Run(cfg, "/bin/echo hello")
+	if code != 0 {
+		t.Fatalf("exit code %d, stderr: %s", code, stderr.String())
+	}
+	if stdout.String() != "hello\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	// exactly one structured result line, class=exec
+	line := lastJSONLine(stderr.String())
+	if !strings.Contains(line, `"class":"exec"`) || !strings.Contains(line, `"exit":0`) {
+		t.Fatalf("result line = %s", line)
+	}
+	// fail-closed pre-exec event + post-exec outcome event
+	if len(rec.Events) < 2 {
+		t.Fatalf("expected pre+post events, got %d", len(rec.Events))
+	}
+	pre, post := rec.Events[0], rec.Events[len(rec.Events)-1]
+	if pre.Phase != "pre" || pre.Decision != audit.DecisionAllow {
+		t.Errorf("pre event: %+v", pre)
+	}
+	if post.Phase != "post" || post.Exit != 0 || post.DurationMS < 0 {
+		t.Errorf("post event: %+v", post)
+	}
+	if post.Argv[0] != "/bin/echo" {
+		t.Errorf("argv not recorded: %+v", post.Argv)
+	}
+}
+
+func TestRunDenyNoRule(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	code := Run(cfg, "/bin/rm -rf /")
+	if code != 125 {
+		t.Fatalf("exit code %d, want 125", code)
+	}
+	line := lastJSONLine(stderr.String())
+	if !strings.Contains(line, `"class":"denied"`) {
+		t.Fatalf("result line = %s", line)
+	}
+}
+
+func TestRunDenyRulePrefix(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	// deny rule has prefix semantics: find with any args is denied
+	code := Run(cfg, "find / -name x")
+	if code != 125 {
+		t.Fatalf("exit code %d, want 125", code)
+	}
+	if !strings.Contains(stderr.String(), `"class":"denied"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunMalformedArgv(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	code := Run(cfg, "/bin/echo \x1b[31mx") // terminal escape byte
+	if code != 3 {
+		t.Fatalf("exit code %d, want 3", code)
+	}
+	if !strings.Contains(stderr.String(), `"class":"malformed"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunLockdown(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	// plant the tripwire
+	if err := os.WriteFile(cfg.Tripwire, []byte("lockdown"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(cfg.Tripwire)
+	code := Run(cfg, "/bin/echo hello")
+	if code != 2 {
+		t.Fatalf("exit code %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), `"class":"lockdown"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+	// even builtins are refused in lockdown
+	cfg2, _, _, _ := testConfig(t, execPolicy)
+	os.WriteFile(cfg2.Tripwire, []byte("lockdown"), 0o644)
+	if code := Run(cfg2, "sy-policy"); code != 2 {
+		t.Fatalf("builtin in lockdown: exit %d", code)
+	}
+}
+
+func TestRunPolicyFailClosed(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	// make the policy world-writable → loader must refuse
+	os.Chmod(cfg.PolicyPath, 0o666)
+	code := Run(cfg, "/bin/echo hello")
+	if code != 125 {
+		t.Fatalf("exit code %d, want 125 (fail closed)", code)
+	}
+	if !strings.Contains(stderr.String(), "fail closed") {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+	os.Chmod(cfg.PolicyPath, 0o644)
+	// missing policy → also fail closed
+	cfg.PolicyPath = cfg.PolicyPath + ".missing"
+	if code := Run(cfg, "/bin/echo hello"); code != 125 {
+		t.Fatalf("missing policy: exit %d", code)
+	}
+}
+
+func TestRunPrivilegedRefused(t *testing.T) {
+	doc := `
+version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/bin/echo", "danger"]
+path = "/bin/echo"
+privileged = true
+`
+	cfg, rec, _, stderr := testConfig(t, doc)
+	code := Run(cfg, "/bin/echo danger")
+	if code != 126 {
+		t.Fatalf("exit code %d, want 126", code)
+	}
+	if !strings.Contains(stderr.String(), `"class":"privileged_unavailable"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+	// and no child may have run: no post-exec event
+	for _, ev := range rec.Events {
+		if ev.Phase == "post" {
+			t.Fatalf("privileged argv executed: %+v", ev)
+		}
+	}
+}
+
+func TestRunBuiltinSyPolicy(t *testing.T) {
+	cfg, _, stdout, stderr := testConfig(t, execPolicy)
+	code := Run(cfg, "sy-policy")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `[[rule]]`) {
+		t.Fatalf("sy-policy output missing policy body: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `"class":"builtin"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunBuiltinSyDocs(t *testing.T) {
+	cfg, _, stdout, _ := testConfig(t, execPolicy)
+	os.WriteFile(cfg.DocsDir+"/runbook.md", []byte("# runbook\nrestart nginx with systemctl\n"), 0o644)
+
+	if code := Run(cfg, "sy-docs"); code != 0 || !strings.Contains(stdout.String(), "runbook") {
+		t.Fatalf("sy-docs list: exit code %d, stdout %q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := Run(cfg, "sy-docs runbook"); code != 0 || !strings.Contains(stdout.String(), "restart nginx") {
+		t.Fatalf("sy-docs runbook: exit %d, stdout %q", code, stdout.String())
+	}
+	stdout.Reset()
+	// path traversal attempts are rejected
+	for _, bad := range []string{"sy-docs ../policy", "sy-docs .hidden", "sy-docs /etc/passwd", "sy-docs a/b"} {
+		if code := Run(cfg, bad); code == 0 {
+			t.Errorf("sy-docs accepted %q", bad)
+		}
+	}
+}
+
+func TestRunResultStub(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	code := Run(cfg, "sysh-result 123")
+	if code != 126 {
+		t.Fatalf("exit %d, want 126", code)
+	}
+	if !strings.Contains(stderr.String(), `"class":"privileged_unavailable"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunPermissiveMode(t *testing.T) {
+	doc := `
+version = 2
+mode = "permissive"
+
+[[rule]]
+argv = ["find"]
+deny = true
+`
+	cfg, rec, stdout, stderr := testConfig(t, doc)
+	code := Run(cfg, "/bin/echo permissive")
+	if code != 0 || stdout.String() != "permissive\n" {
+		t.Fatalf("permissive exec failed: exit %d stderr %s", code, stderr.String())
+	}
+	// deny still applies
+	if code := Run(cfg, "find /"); code != 125 {
+		t.Fatalf("permissive deny: exit %d", code)
+	}
+	if len(rec.Events) < 2 {
+		t.Fatalf("events not recorded in permissive mode: %+v", rec.Events)
+	}
+}
+
+func TestRunAuditSinkFailClosed(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	cfg.Sink = failingSink{}
+	code := Run(cfg, "/bin/echo hello")
+	if code != 125 {
+		t.Fatalf("exit %d, want 125 (fail closed on sink error)", code)
+	}
+	if !strings.Contains(stderr.String(), "fail closed") {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunTimeout(t *testing.T) {
+	doc := `
+version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/bin/sleep"]
+path = "/bin/sleep"
+timeout = 1
+rest = "[0-9]+"
+`
+	cfg, _, _, stderr := testConfig(t, doc)
+	start := time.Now()
+	code := Run(cfg, "/bin/sleep 30")
+	elapsed := time.Since(start)
+	if code != 124 {
+		t.Fatalf("exit %d, want 124 (timeout)", code)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("timeout took %v; child not killed", elapsed)
+	}
+	if !strings.Contains(stderr.String(), `"class":"timeout"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunChildExitCodePassesThrough(t *testing.T) {
+	doc := execPolicy + `
+[[rule]]
+argv = ["/bin/false"]
+path = "/bin/false"
+`
+	cfg, _, _, stderr := testConfig(t, doc)
+	code := Run(cfg, "/bin/false")
+	if code != 1 {
+		t.Fatalf("child exit code %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), `"exit":1`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+func TestRunOutputCap(t *testing.T) {
+	doc := `
+version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/yes"]
+path = "/usr/bin/yes"
+timeout = 30
+`
+	if _, err := os.Stat("/usr/bin/yes"); err != nil {
+		t.Skip("no /usr/bin/yes")
+	}
+	cfg, _, stdout, stderr := testConfig(t, doc)
+	code := Run(cfg, "/usr/bin/yes")
+	if code != 124 {
+		t.Fatalf("exit %d, want 124 (output cap kill)", code)
+	}
+	if stdout.Len() > (1<<20)+4096 {
+		t.Fatalf("stdout far exceeds cap: %d bytes", stdout.Len())
+	}
+	if !strings.Contains(stderr.String(), `"class":"output_truncated"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+}
+
+type failingSink struct{}
+
+func (failingSink) Emit(ev audit.Event) error { return errSinkDown }
+
+var errSinkDown = &sinkError{}
+
+type sinkError struct{}
+
+func (*sinkError) Error() string { return "journal sink down" }
+
+func lastJSONLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], `"sysh":1`) {
+			return lines[i]
+		}
+	}
+	return ""
+}

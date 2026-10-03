@@ -1,0 +1,13 @@
+## sysh auditd rules (§8.4): kernel-side exec accounting for the sy user.
+## The sy UID is substituted at package install time (SY_UID placeholder).
+## auditd is mandatory in permissive mode; optional (recommended) in enforcing.
+
+# Every execve by the agent channel user, success or failure.
+-a always,exit -F arch=b64 -S execve -F euid=SY_UID -F key=sysh_exec
+-a always,exit -F arch=b32 -S execve -F euid=SY_UID -F key=sysh_exec
+
+# Policy file tampering attempts (the gateway reads it; only root may write).
+-w /etc/sysh/ -p wa -k sysh_policy
+
+# Lockdown tripwire plant/clear.
+-w /run/sysh-tripwire/ -p wa -k sysh_lockdown

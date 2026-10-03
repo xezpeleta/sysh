@@ -1,0 +1,85 @@
+#!/bin/bash
+# sysh postinst: all host-local setup (§4). No orchestrator, no daemon.
+set -eu
+
+ETC=/etc/sysh
+RUN=/run/sysh
+TRIPWIRE=/run/sysh-tripwire
+SY_USER=sy
+SY_HOME=/var/lib/sysh
+
+case "${1:-}" in
+  configure)
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+fail() { echo "sysh postinst: $*" >&2; exit 1; }
+
+# --- 1. systemd present?
+[ -d /run/systemd/system ] || fail "systemd is required (§4.1); refusing to install"
+
+# --- 2. sy user (§4.2): system account, no password, gateway shell.
+# Refuse if `sy` already exists with a different shell or is not a
+# system user: the operator must resolve that by hand.
+if id "$SY_USER" >/dev/null 2>&1; then
+  current_shell=$(getent passwd "$SY_USER" | cut -d: -f7)
+  if [ "$current_shell" != "/usr/bin/sysh" ]; then
+    fail "user $SY_USER exists with shell $current_shell; refusing to take it over (set it to /usr/bin/sysh manually or remove the user)"
+  fi
+else
+  useradd --system --shell /usr/bin/sysh --home-dir "$SY_HOME" --no-create-home "$SY_USER"
+fi
+# /usr/bin/sysh must be a valid login shell for sshd
+grep -qx '/usr/bin/sysh' /etc/shells 2>/dev/null || echo /usr/bin/sysh >> /etc/shells
+
+# --- 3. directories (persistent side; volatile side is tmpfiles.d)
+install -d -m 0755 -o root -g root "$ETC"
+install -d -m 0755 -o root -g root "$ETC/docs"
+install -d -m 0755 -o root -g root "$ETC/flags"
+install -d -m 0755 -o root -g root "$SY_HOME"
+# empty agent keys until the operator registers some (0644: the gateway
+# reads keys.map for attribution)
+touch "$ETC/authorized_keys" "$ETC/keys.map"
+chown root:root "$ETC/authorized_keys" "$ETC/keys.map"
+chmod 0644 "$ETC/authorized_keys" "$ETC/keys.map"
+
+# --- 4. volatile state now (tmpfiles.d covers future boots)
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/sysh.conf
+
+# --- 5. auditd rules (§8.4): installed when auditd is present — the
+# pragmatic default-yes; permissive-mode policy installs refuse to
+# proceed without them.
+if command -v auditctl >/dev/null 2>&1 && [ -d /etc/audit/rules.d ]; then
+  sy_uid=$(id -u "$SY_USER")
+  sed "s/SY_UID/$sy_uid/g" /usr/share/sysh/audit-rules.template \
+    > /etc/audit/rules.d/60-sysh.rules
+  chown root:root /etc/audit/rules.d/60-sysh.rules
+  chmod 0640 /etc/audit/rules.d/60-sysh.rules
+  augenrules --load >/dev/null 2>&1 || echo "sysh postinst: augenrules --load failed; run it manually" >&2
+fi
+
+# --- 6. sshd drop-in (§5.3), validated before it can take effect.
+if [ -d /etc/ssh/sshd_config.d ] && command -v sshd >/dev/null 2>&1; then
+  install -m 0644 /usr/share/sysh/sshd-dropin.conf /etc/ssh/sshd_config.d/60-sysh.conf
+  if ! sshd -t 2>/dev/null; then
+    # roll back a config sshd refuses to load — never break operator ssh
+    rm -f /etc/ssh/sshd_config.d/60-sysh.conf
+    fail "sshd -t rejected the sysh drop-in; agent channel not configured (report a bug)"
+  fi
+  # best-effort reload; the config applies on next restart regardless
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+else
+  echo "sysh postinst: no /etc/ssh/sshd_config.d or no sshd — install the drop-in manually (see /usr/share/sysh/sshd-dropin.conf)" >&2
+fi
+
+# --- 7. self-check of the gateway's containment bits
+/usr/bin/sysh selfcheck || fail "gateway selfcheck failed (NNP/DUMPABLE)"
+
+echo "sysh installed. Next steps (as root, over your operator SSH):"
+echo "  sysh auth add          # paste: restrict ssh-ed25519 AAAA... <key-id>"
+echo "  sysh policy install < policy.toml   # see /usr/share/sysh/policy.example.toml"
+echo "  sysh doctor"
+exit 0
