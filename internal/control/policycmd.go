@@ -30,7 +30,7 @@ func cmdPolicy(args []string) int {
 		source = rest[0]
 		data, err = os.ReadFile(rest[0])
 	} else {
-		data, err = io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+		data, err = io.ReadAll(io.LimitReader(stdin, 1<<20))
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysh policy %s: %v\n", sub, err)
@@ -43,7 +43,7 @@ func cmdPolicy(args []string) int {
 		return 1
 	}
 
-	findings := policy.Lint(p, policy.RealFS())
+	findings := policy.Lint(p, lintFS)
 	errors, warnings := reportFindings(findings)
 	if errors > 0 {
 		fmt.Fprintf(os.Stderr, "sysh policy %s: %d error(s); refusing\n", sub, errors)
@@ -64,13 +64,13 @@ func cmdPolicy(args []string) int {
 	}
 
 	// Permissive mode requires active auditd rules (§6.6, §8.4).
-	if p.Mode == policy.ModePermissive && !auditRulesActive() {
+	if p.Mode == policy.ModePermissive && !auditRulesActiveFn() {
 		fmt.Fprintln(os.Stderr, "sysh policy install: permissive mode requires active auditd integration (§8.4);")
 		fmt.Fprintln(os.Stderr, "  reinstall the package with auditd present, or verify /etc/audit/rules.d/60-sysh.rules and run augenrules --load")
 		return 1
 	}
 
-	if err := fscheck.EnsureOwnedDir(etcDir, 0); err != nil {
+	if err := fscheck.EnsureOwnedDir(etcDir, ownerUID); err != nil {
 		fmt.Fprintf(os.Stderr, "sysh policy install: %v\n", err)
 		return 1
 	}
@@ -106,3 +106,9 @@ func auditRulesActive() bool {
 	}
 	return strings.Contains(strings.ToLower(string(out)), "sysh")
 }
+
+// Hooks the test suite stubs; production defaults.
+var (
+	lintFS              policy.FS = policy.RealFS()
+	auditRulesActiveFn            = auditRulesActive
+)

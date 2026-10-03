@@ -155,7 +155,7 @@ func Lint(p *Policy, fs FS) []Finding {
 		findings = append(findings, Finding{SevInfo, -1, "policy contains privileged rules; they require human approval (phase 2) and never execute from the agent"})
 	}
 	if p.Mode == ModePermissive {
-		findings = append(findings, Finding{SevWarning, -1, "permissive mode: every well-formed argv runs as the unprivileged sy user — treat the host as disposable and keep auditd active"})
+		findings = append(findings, Finding{SevInfo, -1, "permissive mode: every well-formed argv runs as the unprivileged sy user — treat the host as disposable; install refuses it without active auditd rules"})
 	}
 
 	return findings

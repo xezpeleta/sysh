@@ -148,14 +148,14 @@ func cmdJournalGroup(args []string) int {
 			fmt.Fprintf(os.Stderr, "sysh journal-group: %v\n", err)
 			return 1
 		}
-		if err := addGroupMember("sy", "systemd-journal"); err != nil {
+		if err := addGroupFn("sy", "systemd-journal"); err != nil {
 			fmt.Fprintf(os.Stderr, "sysh journal-group: %v\n (add sy to systemd-journal with: gpasswd -a sy systemd-journal)\n", err)
 			return 1
 		}
 		fmt.Println("sy added to systemd-journal (flag recorded)")
 		return 0
 	case "disable":
-		if err := delGroupMember("sy", "systemd-journal"); err != nil {
+		if err := delGroupFn("sy", "systemd-journal"); err != nil {
 			fmt.Fprintf(os.Stderr, "sysh journal-group: %v\n (remove with: gpasswd -d sy systemd-journal)\n", err)
 			return 1
 		}
@@ -182,3 +182,9 @@ func delGroupMember(user, group string) error {
 	}
 	return exec.Command(gp, "-d", user, group).Run()
 }
+
+// Hooks the test suite stubs; production defaults.
+var (
+	addGroupFn = addGroupMember
+	delGroupFn = delGroupMember
+)

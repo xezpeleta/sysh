@@ -6,17 +6,26 @@ package control
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
-// Paths (production).
-const (
+// Paths (production defaults). Vars, not consts, so tests can point
+// them at fixtures; production never overrides them (no env vars).
+var (
 	etcDir       = "/etc/sysh"
 	authKeysPath = "/etc/sysh/authorized_keys"
 	keysMapPath  = "/etc/sysh/keys.map"
 	policyPath   = "/etc/sysh/policy.toml"
 	flagsDir     = "/etc/sysh/flags"
 	tripwirePath = "/run/sysh-tripwire/lockdown"
+
+	// ownerUID is the uid that must own the /etc/sysh tree: root in
+	// production; tests set it to their own uid.
+	ownerUID = 0
+
+	// stdin is where auth add / policy install read operator input.
+	stdin io.Reader = os.Stdin
 )
 
 // Main dispatches a control invocation. Args exclude the program name.

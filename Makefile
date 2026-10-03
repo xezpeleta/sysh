@@ -1,6 +1,10 @@
-.PHONY: build test vet lint deb clean smoke
+.PHONY: build test vet lint deb clean smoke ci
 
 BINARY := dist/sysh
+
+ci: vet test
+	bash -n debian/postinst debian/postrm build.sh
+	./build.sh >/dev/null && dpkg-deb -I dist/sysh_0.1.0_amd64.deb >/dev/null && rm -rf dist/sysh-0.1.0 && echo "ci: ok"
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(BINARY) ./cmd/sysh

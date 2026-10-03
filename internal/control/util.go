@@ -30,8 +30,13 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
-	if err := os.Chown(tmpName, 0, 0); err != nil {
-		return err
+	// Ownership is root:root; in production control always runs as
+	// root (checked in Main). Under the unprivileged test suite the
+	// chown would EPERM — skip it there; tests assert content/mode.
+	if os.Geteuid() == 0 {
+		if err := os.Chown(tmpName, 0, 0); err != nil {
+			return err
+		}
 	}
 	return os.Rename(tmpName, path)
 }

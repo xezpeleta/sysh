@@ -42,7 +42,7 @@ func cmdAuth(args []string) int {
 // `restrict` option; only `restrict` and `from=` are accepted (any
 // option granting command/pty/forwarding/agent access is refused).
 func authAdd() int {
-	line, err := readKeyLine(os.Stdin)
+	line, err := readKeyLine(stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysh auth add: %v\n", err)
 		return 1
@@ -94,7 +94,7 @@ func authAdd() int {
 	}
 
 	// Refuse host directories we do not fully control.
-	if err := fscheck.EnsureOwnedDir(etcDir, 0); err != nil {
+	if err := fscheck.EnsureOwnedDir(etcDir, ownerUID); err != nil {
 		fmt.Fprintf(os.Stderr, "sysh auth add: %v\n", err)
 		return 1
 	}
@@ -139,11 +139,22 @@ func authList() int {
 		fmt.Println("no keys registered")
 		return 0
 	}
-	// Cross-check against authorized_keys.
-	ak, _ := os.ReadFile(authKeysPath)
+	// Cross-check against authorized_keys by parsing each line and
+	// comparing fingerprints (the file holds key material, not
+	// fingerprints — substring matching never worked).
+	present := map[string]bool{}
+	data, _ := os.ReadFile(authKeysPath)
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		if fp := lineFingerprint(line); fp != "" {
+			present[fp] = true
+		}
+	}
 	for fp, id := range km {
 		state := "MISSING from authorized_keys"
-		if strings.Contains(string(ak), strings.TrimPrefix(fp, "SHA256:")) || strings.Contains(string(ak), fp) {
+		if present[fp] {
 			state = "ok"
 		}
 		fmt.Printf("%-40s %s\n", fp, id+"\t"+state)
@@ -182,17 +193,19 @@ func authRemove(keyID string) int {
 		return 1
 	}
 
-	// Remove the matching authorized_keys line (match by fingerprint body).
-	body := strings.TrimPrefix(fp, "SHA256:")
+	// Remove the matching authorized_keys line by fingerprint: the
+	// file holds raw key material, not fingerprints, so each line must
+	// be parsed and hashed to find the match.
 	var kept []string
 	data, _ := os.ReadFile(authKeysPath)
 	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" || !strings.Contains(line, body) {
-			if line != "" {
-				kept = append(kept, line)
-			}
+		if line == "" {
 			continue
 		}
+		if lineFingerprint(line) == fp {
+			continue
+		}
+		kept = append(kept, line)
 	}
 	var akOut strings.Builder
 	for _, l := range kept {
@@ -208,7 +221,7 @@ func authRemove(keyID string) int {
 
 // readKeyLine reads the first non-empty line, size-capped, rejecting
 // embedded newlines inside the payload (single line by construction).
-func readKeyLine(r *os.File) (string, error) {
+func readKeyLine(r io.Reader) (string, error) {
 	sc := bufio.NewScanner(io.LimitReader(r, 8192))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -250,6 +263,16 @@ func validKeyID(id string) bool {
 		}
 	}
 	return true
+}
+
+// lineFingerprint parses one authorized_keys line and returns its
+// SHA256 fingerprint, or "" if the line holds no parseable key.
+func lineFingerprint(line string) string {
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+	if err != nil {
+		return ""
+	}
+	return ssh.FingerprintSHA256(key)
 }
 
 func readKeysMap() (map[string]string, error) {

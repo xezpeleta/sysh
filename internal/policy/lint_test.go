@@ -127,16 +127,16 @@ func TestLintPrivilegedTimeout(t *testing.T) {
 	}
 }
 
-func TestLintPermissiveModeWarns(t *testing.T) {
+func TestLintPermissiveModeNoted(t *testing.T) {
 	p := pol(ModePermissive)
 	found := false
 	for _, f := range Lint(p, stdFS()) {
-		if f.Severity == SevWarning && strings.Contains(f.Msg, "disposable") {
+		if f.Severity == SevInfo && strings.Contains(f.Msg, "disposable") {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("permissive mode must carry the disposable-host warning")
+		t.Error("permissive mode must carry the disposable-host note (info: the hard requirement is the auditd gate at install time, not a warning the ack system cannot express)")
 	}
 }
 

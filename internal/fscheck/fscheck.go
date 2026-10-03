@@ -10,7 +10,9 @@ import (
 )
 
 // EnsureOwnedDir verifies dir and every ancestor up to / are owned by
-// ownerUID and not group/world-writable, and that dir is a directory.
+// ownerUID (or by root — root-owned ancestors are trusted, same rule
+// as the gateway's policy loader) and not group/world-writable, and
+// that dir is a directory.
 func EnsureOwnedDir(dir string, ownerUID int) error {
 	cur := dir
 	for {
@@ -21,8 +23,14 @@ func EnsureOwnedDir(dir string, ownerUID int) error {
 		if !fi.IsDir() {
 			return fmt.Errorf("%s: not a directory", cur)
 		}
-		if statUID(fi) != ownerUID {
-			return fmt.Errorf("%s: owner uid %d, expected %d", cur, statUID(fi), ownerUID)
+		uid := statUID(fi)
+		if cur == dir {
+			// the directory itself must be exactly ownerUID
+			if uid != ownerUID {
+				return fmt.Errorf("%s: owner uid %d, expected %d", cur, uid, ownerUID)
+			}
+		} else if uid != ownerUID && uid != 0 {
+			return fmt.Errorf("%s: owner uid %d, expected %d or root", cur, uid, ownerUID)
 		}
 		if fi.Mode().Perm()&0o022 != 0 {
 			return fmt.Errorf("%s: group/world-writable (mode %o)", cur, fi.Mode().Perm())
