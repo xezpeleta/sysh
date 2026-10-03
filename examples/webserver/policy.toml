@@ -1,0 +1,166 @@
+# sysh example policy — AI-agent maintenance on a typical Debian/Ubuntu
+# web server (Apache + fail2ban).
+#
+# This is an example, not a fleet policy: read examples/webserver/README.md
+# for the OS-side setup it assumes (log ACLs, journal opt-in, sudo >= 1.9.13),
+# delete what you do not want, then `sysh policy install` it.
+
+version = 2
+mode = "enforcing"
+
+# ── observe (unprivileged, read-only) ─────────────────────────────────
+
+[[rule]]
+argv = ["/usr/bin/uptime"]
+path = "/usr/bin/uptime"
+
+[[rule]]
+argv = ["/bin/df", "-h"]
+path = "/bin/df"
+
+[[rule]]
+argv = ["/usr/bin/free", "-m"]
+path = "/usr/bin/free"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "status", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "is-active", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+# journalctl needs the documented opt-in: `sysh journal-group enable`
+[[rule]]
+argv = ["/usr/bin/journalctl", "-u", "[a-z0-9@._][a-z0-9@._\\-]*", "-n", "[0-9]+"]
+path = "/usr/bin/journalctl"
+
+[[rule]]
+argv = ["/usr/bin/journalctl", "--disk-usage"]
+path = "/usr/bin/journalctl"
+
+# apache and fail2ban logs — need the ACL setup from README.md
+[[rule]]
+argv = ["/usr/bin/tail", "-n", "[0-9]+", "/var/log/apache2/access.log"]
+path = "/usr/bin/tail"
+
+[[rule]]
+argv = ["/usr/bin/tail", "-n", "[0-9]+", "/var/log/apache2/error.log"]
+path = "/usr/bin/tail"
+
+[[rule]]
+argv = ["/usr/bin/tail", "-n", "[0-9]+", "/var/log/fail2ban.log"]
+path = "/usr/bin/tail"
+
+# config trees: list and read (world-readable by default on Debian)
+[[rule]]
+argv = ["/usr/bin/ls", "-la", "/etc/apache2/sites-available"]
+path = "/usr/bin/ls"
+
+[[rule]]
+argv = ["/usr/bin/ls", "-la", "/etc/apache2/sites-enabled"]
+path = "/usr/bin/ls"
+
+[[rule]]
+argv = ["/usr/bin/ls", "-la", "/etc/apache2/conf-available"]
+path = "/usr/bin/ls"
+
+[[rule]]
+argv = ["/usr/bin/cat", "/etc/apache2/[a-zA-Z0-9._][a-zA-Z0-9._\\-]*"]
+path = "/usr/bin/cat"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/cat", "/etc/apache2/sites-available/[a-zA-Z0-9._][a-zA-Z0-9._\\-]*"]
+path = "/usr/bin/cat"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/cat", "/etc/apache2/sites-enabled/[a-zA-Z0-9._][a-zA-Z0-9._\\-]*"]
+path = "/usr/bin/cat"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/cat", "/etc/apache2/conf-available/[a-zA-Z0-9._][a-zA-Z0-9._\\-]*"]
+path = "/usr/bin/cat"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/cat", "/etc/fail2ban/jail.local"]
+path = "/usr/bin/cat"
+
+# ── root verbs (privileged: exact argv, enumerated one by one) ────────
+# sudoers grants are exact argv — no patterns, no rest. Each grant bounds
+# WHERE the agent may write, not WHAT it writes: content arrives on
+# stdin through tee. Validate before reloading, always.
+
+# validate apache config (the agent must run this after every edit)
+[[rule]]
+argv = ["/usr/sbin/apache2ctl", "configtest"]
+path = "/usr/sbin/apache2ctl"
+privileged = true
+ack = true
+timeout = 30
+
+# write apache config files (root-owned; enumerate your own set)
+[[rule]]
+argv = ["/usr/bin/tee", "/etc/apache2/ports.conf"]
+path = "/usr/bin/tee"
+privileged = true
+ack = true
+timeout = 30
+
+[[rule]]
+argv = ["/usr/bin/tee", "/etc/apache2/conf-available/security.conf"]
+path = "/usr/bin/tee"
+privileged = true
+ack = true
+timeout = 30
+
+[[rule]]
+argv = ["/usr/bin/tee", "/etc/apache2/sites-available/000-default.conf"]
+path = "/usr/bin/tee"
+privileged = true
+ack = true
+timeout = 30
+
+# apply
+[[rule]]
+argv = ["/usr/bin/systemctl", "reload", "apache2"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "apache2"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+
+# fail2ban: local overrides and restart
+[[rule]]
+argv = ["/usr/bin/tee", "/etc/fail2ban/jail.local"]
+path = "/usr/bin/tee"
+privileged = true
+ack = true
+timeout = 30
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "fail2ban"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+
+# ── hard denials ──────────────────────────────────────────────────────
+
+# deny rules: prefix semantics, checked before every allow
+[[rule]]
+argv = ["/usr/bin/sudo"]
+deny = true
+
+[[rule]]
+argv = ["/bin/su"]
+deny = true

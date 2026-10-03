@@ -149,6 +149,11 @@ func Lint(p *Policy, fs FS) []Finding {
 			if r.Rest != "" {
 				findings = append(findings, Finding{SevError, i, "privileged rule cannot use rest (sudoers grants are exact argv)"})
 			}
+			for _, a := range r.Argv {
+				if isPattern(a) {
+					findings = append(findings, Finding{SevError, i, fmt.Sprintf("privileged rule argv element %q is a pattern (sudoers grants are exact argv; enumerate the literal commands instead)", a)})
+				}
+			}
 			if !r.Ack {
 				findings = append(findings, Finding{SevError, i, "privileged rule requires ack = true (deliberate root-exec opt-in)"})
 			}

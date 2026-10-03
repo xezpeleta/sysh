@@ -269,3 +269,11 @@ timeout = 99999`, // out of range
 		}
 	}
 }
+
+func TestLintPrivilegedPatternRefused(t *testing.T) {
+	base := Rule{Argv: []string{"/usr/bin/tee", "/etc/apache2/sites-available/[a-z]+\\.conf"}, Path: "/usr/bin/tee", Privileged: true, Ack: true, Timeout: 30}
+	p := pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "is a pattern (sudoers grants are exact argv") {
+		t.Errorf("privileged pattern argv must error: %v", msgs)
+	}
+}

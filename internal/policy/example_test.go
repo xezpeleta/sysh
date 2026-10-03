@@ -85,3 +85,61 @@ func TestExamplePolicyDenyRules(t *testing.T) {
 		t.Error("leading-dash extra arg must not match the rest pattern")
 	}
 }
+
+// TestWebserverExampleIsValid keeps the shipped web-server example
+// honest: parse + lint clean (all acks present, patterns safe, no
+// patterns inside privileged rules).
+func TestWebserverExampleIsValid(t *testing.T) {
+	data, err := os.ReadFile("../../examples/webserver/policy.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(data)
+	if err != nil {
+		t.Fatalf("webserver example does not parse: %v", err)
+	}
+
+	fs := newMemFS()
+	for i := range p.Rules {
+		if p.Rules[i].Path != "" {
+			fs.addFile(p.Rules[i].Path, 0o755, 0)
+		}
+	}
+	for _, f := range Lint(p, fs) {
+		if f.Severity == SevError {
+			t.Errorf("webserver example error: %s", f)
+		}
+		if f.Severity == SevWarning {
+			t.Errorf("webserver example warning (install would refuse): %s", f)
+		}
+	}
+
+	c, err := Compile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := [][]string{
+		{"/usr/bin/uptime"},
+		{"/usr/bin/systemctl", "status", "apache2"},
+		{"/usr/bin/tail", "-n", "100", "/var/log/apache2/error.log"},
+		{"/usr/bin/cat", "/etc/apache2/ports.conf"},
+		{"/usr/bin/systemctl", "reload", "apache2"},
+	}
+	for _, argv := range allowed {
+		if d := c.Match(argv); !d.Allowed {
+			t.Errorf("webserver example denied %v", argv)
+		}
+	}
+	denied := [][]string{
+		{"/usr/bin/sudo", "-n", "id"},
+		{"/bin/su"},
+		{"/usr/bin/tail", "-n", "50", "/var/log/auth.log"},
+		{"/usr/bin/tee", "/etc/apache2/apache2.conf"},
+		{"/usr/bin/cat", "/etc/shadow"},
+	}
+	for _, argv := range denied {
+		if d := c.Match(argv); d.Allowed {
+			t.Errorf("webserver example let %v through", argv)
+		}
+	}
+}

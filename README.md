@@ -90,10 +90,10 @@ ownership, traverse-only directories), deploy the agent key, and run
 `sysh doctor` until it is clean. In this phase the code agent is an
 assistant to the operator, not autonomous: every root action is
 supervised, interactive, and reversible (work on a VM you can snapshot —
-`sysh` itself has no rollback). A worked example — "read and modify the
-Wazuh agent config as an unprivileged user, restart as the single
-pre-authorized root verb" — is recorded in
-[`deployments/unifi/README.md`](deployments/unifi/README.md).
+`sysh` itself has no rollback). A worked example — an agent-maintained
+web server: read the Apache config tree and logs, write the enumerated
+config files, validate, reload — is spelled out in
+[`examples/webserver/`](examples/webserver/).
 
 **Unattended operation.** Once the host is prepared, the agent connects
 as `sy` over plain SSH and works alone inside the bounds the operator

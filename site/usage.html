@@ -100,21 +100,21 @@ enforces the deadline — is documented in PROJECT.md §6.8.</p>
 
 <h2 id="profiles">Profiles: composing with OS permissions</h2>
 <p>Fine-grained shapes come from composing the argv policy with ordinary OS
-permissions, prepared in the attended phase. The worked example —
-<em>read and modify the Wazuh agent config as an unprivileged user, restart
-as the single root verb</em> — lives in
-<a href="https://github.com/xezpeleta/sysh/blob/main/deployments/unifi/README.md">deployments/unifi/README.md</a>:</p>
-<pre><code><span class="c"># OS side (operator, once): a file-access group is sy's ceiling</span>
-groupadd sysh-wazuh-cfg &amp;&amp; usermod -aG sysh-wazuh-cfg sy
-chgrp sysh-wazuh-cfg /var/ossec/etc/ossec.conf    <span class="c"># 0664</span>
+permissions, prepared in the attended phase. The worked example — an
+<em>agent-maintained web server</em>: read the Apache config tree and logs,
+write the enumerated config files, validate, reload — lives in
+<a href="https://github.com/xezpeleta/sysh/tree/main/examples/webserver">examples/webserver/</a>:</p>
+<pre><code><span class="c"># OS side (operator, once): ACLs carry the log reads — no groups needed</span>
+setfacl -m u:sy:rX /var/log/apache2
+setfacl -d -m u:sy:r /var/log/apache2      <span class="c"># survive logrotate</span>
 
-<span class="c"># policy side: the verbs</span>
-[[rule]]  argv = ["/usr/bin/cat", "/var/ossec/etc/ossec.conf"]
-[[rule]]  argv = ["/usr/bin/tee", "/var/ossec/etc/ossec.conf"]
-[[rule]]  argv = ["/usr/bin/systemctl", "restart", "wazuh-agent"]
-          privileged = true, ack = true, timeout = 60</code></pre>
-<p>The agent then manages that config file — content on stdin through
-<code>tee</code> — and can restart the service. And nothing else.</p>
+<span class="c"># policy side: the verbs (privileged rules are exact argv)</span>
+[[rule]]  argv = ["/usr/bin/tail", "-n", "[0-9]+", "/var/log/apache2/error.log"]
+[[rule]]  argv = ["/usr/sbin/apache2ctl", "configtest"]   <span class="c"># privileged</span>
+[[rule]]  argv = ["/usr/bin/tee", "/etc/apache2/ports.conf"]  <span class="c"># privileged</span>
+[[rule]]  argv = ["/usr/bin/systemctl", "reload", "apache2"]  <span class="c"># privileged</span></code></pre>
+<p>The agent then maintains that server — config content on stdin through
+<code>tee</code>, validate, reload — and nothing else.</p>
 
 <h2 id="record">Reading the record</h2>
 <pre><code><span class="p">$</span> journalctl -t sysh --since today    <span class="c"># every exec attempt, both phases</span>
@@ -129,8 +129,9 @@ chgrp sysh-wazuh-cfg /var/ossec/etc/ossec.conf    <span class="c"># 0664</span>
   <li><strong>PROJECT.md</strong> — the specification: threat model, §6
   gateway, §6.8 privileged execution, two security-review rounds with
   dispositions. <a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">read it ↗</a></li>
-  <li><strong>deployments/</strong> — per-host runbooks from the pilot
-  fleet. <a href="https://github.com/xezpeleta/sysh/tree/main/deployments">browse them ↗</a></li>
+  <li><strong>examples/</strong> — worked profiles like the
+  agent-maintained web server, with OS-side setup.
+  <a href="https://github.com/xezpeleta/sysh/tree/main/examples">browse them ↗</a></li>
 </ul>
 
 </main>
