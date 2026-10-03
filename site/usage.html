@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage — sysh</title>
+<meta name="description" content="Installing sysh, writing a policy, adding an agent key, privileged rules, and reading the record.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%230d1117'/><path d='M3 5l3 3-3 3' stroke='%2338d15a' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M8.5 11h4.5' stroke='%2338d15a' stroke-width='1.6' stroke-linecap='round'/></svg>">
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="/sysh/"><span class="prompt">$</span> sysh</a>
+  <div class="nav-links">
+    <a href="/sysh/">What it is</a>
+    <a href="/sysh/usage.html">Usage</a>
+    <a href="https://github.com/xezpeleta/sysh">GitHub</a>
+  </div>
+</nav>
+
+<main class="doc">
+
+<h1>Usage</h1>
+
+<p class="lead">The whole lifecycle: the package does the host-local setup,
+the operator writes the policy and adds the agent key over plain SSH, and
+from then on anyone the policy allows — human or agent — works inside it.</p>
+
+<h2 id="install">1 · Install</h2>
+<p>One .deb from the <a href="https://github.com/xezpeleta/sysh/releases">releases
+page</a> (Debian 12 / Ubuntu 22.04+). The package creates the <code>sy</code>
+user, installs the sshd drop-in, the tmpfiles.d entries and (if auditd is
+present) UID-scoped audit rules. No debconf, no daemon.</p>
+<pre><code>apt install ./sysh_0.1.0_amd64.deb
+sysh doctor   # 0 failures, 0 warnings before you go further</code></pre>
+
+<h2 id="policy">2 · Write the policy</h2>
+<p>The policy is a root-owned TOML file at <code>/etc/sysh/policy.toml</code>.
+Rules match the <strong>literal argv</strong> — fixed absolute paths,
+anchored patterns, no shell semantics. Install it with the built-in linter:</p>
+<pre><code>cat &gt; /etc/sysh/policy.toml &lt;&lt;'EOF'
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/uptime"]
+
+[[rule]]
+argv = ["/bin/df", "-h"]
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "status", "[a-z0-9@._\\-]+"]
+
+# deny rules have prefix semantics and win over any allow
+[[rule]]
+argv = ["/usr/bin/"]
+action = "deny"
+EOF
+sysh policy install /etc/sysh/policy.toml</code></pre>
+<p>The linter rejects over-broad patterns and known escape-hatch binaries
+(shells, interpreters, <code>find</code>, <code>xargs</code>, <code>tar</code>,
+<code>git</code>, <code>ssh</code>, <code>docker</code>…). If it complains,
+the policy does not install — the failure direction is safe.</p>
+
+<h2 id="key">3 · Add the agent key</h2>
+<p>Generate a dedicated key for the agent and register it by fingerprint:
+the key's comment becomes its identity in every event.</p>
+<pre><code>ssh-keygen -t ed25519 -f agent.key -C sy/server.example
+sysh auth add &lt; agent.key.pub     # authorized_keys, options forced
+                                    # (no PTY, no forwarding, forced sysh)</code></pre>
+
+<h2 id="run">4 · Use it</h2>
+<p>From then on the agent — or you — connects as <code>sy</code> over plain
+SSH:</p>
+<pre><code>ssh -i agent.key sy@server '/usr/bin/uptime'
+ssh -i agent.key sy@server '/bin/df -h'
+ssh -i agent.key sy@server '/usr/bin/sudo -n id'
+→ {"class":"denied","detail":"denied by deny rule",...}  exit 125</code></pre>
+<p>Exit codes: <code>2</code> lockdown, <code>3</code> malformed input,
+<code>124</code> timeout, <code>125</code> denied or internal error. Each
+exec gets a systemd scope with resource caps; output above the cap trips and
+is recorded.</p>
+
+<h2 id="privileged">5 · Root verbs: privileged rules</h2>
+<p>For work that needs root, the operator pre-authorizes <em>exact</em>
+argvs. Install generates a root-owned sudoers fragment limited to those
+argvs — nothing else:</p>
+<pre><code>[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "wazuh-agent"]
+path  = "/usr/bin/systemctl"
+privileged = true
+ack  = true          # required: you said so, out loud
+timeout = 60</code></pre>
+<p>At runtime the gateway wraps the exec in <code>sudo -n --</code>; the
+events carry <code>PRIV=true</code> with the agent's argv, and sudo writes
+its own independent PAM journal line. The trade-off — no-new-privs must be
+dropped for the tree while such rules exist, and sudo's
+<code>TIMEOUT=</code> enforces the deadline — is documented in
+PROJECT.md §6.8.</p>
+
+<h2 id="profiles">Profiles: composing with OS permissions</h2>
+<p>Fine-grained shapes come from composing the argv policy with ordinary
+OS permissions, prepared in the attended phase. The worked example —
+“read and modify the Wazuh agent config as an unprivileged user, restart
+as the single root verb” — lives in
+<a href="https://github.com/xezpeleta/sysh/blob/main/deployments/unifi/README.md">deployments/unifi/README.md</a>:</p>
+<pre><code># OS side (operator, once): a file-access group is sy's ceiling
+groupadd sysh-wazuh-cfg &amp;&amp; usermod -aG sysh-wazuh-cfg sy
+chgrp sysh-wazuh-cfg /var/ossec/etc/ossec.conf   # 0664
+
+# policy side: the verbs
+[[rule]]  argv = ["/usr/bin/cat", "/var/ossec/etc/ossec.conf"]
+[[rule]]  argv = ["/usr/bin/tee", "/var/ossec/etc/ossec.conf"]
+[[rule]]  argv = ["/usr/bin/systemctl", "restart", "wazuh-agent"]
+          privileged = true, ack = true, timeout = 60</code></pre>
+<p>The agent then manages that config file — content on stdin through
+<code>tee</code> — and can restart the service, and nothing else.</p>
+
+<h2 id="record">6 · Read the record</h2>
+<pre><code>journalctl -t sysh --since today     # every exec attempt, both phases
+ausearch -k sysh_exec                # kernel-side: files touched, network
+sysh doctor                          # drift and tripwire check
+sysh lockdown                        # panic button: drop the key, exit 2</code></pre>
+
+<h2 id="more">Going deeper</h2>
+<ul class="plain">
+  <li><a href="https://github.com/xezpeleta/sysh/blob/main/README.md">README</a> — the full feature walk-through and honest limits.</li>
+  <li><a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">PROJECT.md</a> — the specification: threat model, §6 gateway, §6.8
+  privileged execution, two security-review rounds with dispositions.</li>
+  <li><a href="https://github.com/xezpeleta/sysh/tree/main/deployments">deployments/</a> — per-host runbooks from the pilot fleet.</li>
+</ul>
+
+</main>
+
+<footer class="footer">
+  <p><a href="https://github.com/xezpeleta/sysh">xezpeleta/sysh</a> ·
+  <a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">PROJECT.md</a> ·
+  <a href="https://github.com/xezpeleta/sysh/releases">releases</a></p>
+</footer>
+
+</body>
+</html>
