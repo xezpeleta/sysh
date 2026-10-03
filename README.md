@@ -5,7 +5,8 @@
 When you let an AI agent operate a server, the options are all-or-nothing:
 give it a root key (it can do anything, silently), or a normal user (it can
 do little, still silently). And even when you *do* let an agent run nearly
-unbounded — snapshot-protected, disposable — the question afterwards is
+unbounded — on a disposable host, rolled back afterwards — the question
+afterwards is
 always the same: *"it works, but what else did it do? which files did it
 change? which other hosts did it touch?"*
 
@@ -51,7 +52,7 @@ a shell.
   against policy, types a confirmation code bound to the *entire* argv,
   and the approve command itself executes it. There is no bearer token to
   steal, replay, or leak.
-- **A permissive mode** for snapshot-protected experimentation: the agent
+- **A permissive mode** for controlled experimentation: the agent
   runs anything it likes — as the unprivileged user, NNP-bit set, every
   argv journaled. Unlimited for the agent, fully recorded for you. Never
   root.
@@ -62,8 +63,10 @@ a shell.
   (unprivileged) user, with the real tools. If you need isolation, run
   `sysh` inside whatever isolation you already have.
 - **Not root-without-approval.** If you want an unrestricted root agent,
-  `sysh` is not that. The closest it offers is permissive mode plus your
-  snapshots.
+  `sysh` is not that. The closest it offers is permissive mode on a host
+  you consider disposable (`sysh` has no snapshot or rollback integration;
+  if you want that, snapshot the VM in your hypervisor first — outside
+  `sysh`).
 - **Not monitoring.** It audits its own channel with kernel-attested
   sinks; shipping and correlating events is your existing stack's job.
 - **Not an agent or a harness.** It works with any client that speaks SSH

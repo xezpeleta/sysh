@@ -15,7 +15,7 @@ of everything the agent did.
 The problem: operators increasingly let agents operate real servers, and the
 options are all-or-nothing. A root key is unacceptable; a normal user is
 unaudited in any agent-specific way; and even when an agent *is* given broad
-power (snapshot-protected experimentation is a legitimate workflow), the
+power (broad, throwaway-host experimentation is a legitimate workflow), the
 operator's first question afterwards — *"it works, but what else did it do?
 which files did it change? which other hosts did it touch?"* — has no answer.
 
@@ -50,7 +50,9 @@ surface ships only after the base is reviewed in production.
   the operator wrote into a `privileged` rule — never a shell, never
   `rest`, never a pattern. For unstructured room the closest is
   *permissive mode* (§6.6): unlimited as the unprivileged `sy` user, fully
-  recorded, rollback via your existing snapshots — still not root.
+  recorded, on a host you treat as disposable — still not root. (Rollback,
+  if you want it, is your own hypervisor/backup practice; `sysh` has no
+  snapshot integration.)
 - **Not monitoring or a SIEM.** `sysh` emits structured, attributable events
   (journal, auditd); shipping and correlating them is your existing stack's
   job.
@@ -290,7 +292,9 @@ caps).
 A policy may set `mode = "permissive"`: every well-formed argv (still
 ASCII-checked, still NNP, still scoped and journaled) runs as the
 unprivileged `sy` user; the OS's own permissions are the only limit. This
-serves the snapshot-protected "give it room, keep the record" workflow —
+serves the "give it room, keep the record" workflow on a host you can
+afford to lose (rolling such a host back is the operator's own
+hypervisor/backup practice, outside `sysh`) —
 understood honestly as **arbitrary code as `sy` on a host you consider
 disposable**: it can reach local services, world-readable secrets, other
 hosts, and (on cloud VMs) the instance metadata endpoint. It never grants
