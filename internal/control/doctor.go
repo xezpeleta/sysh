@@ -71,14 +71,18 @@ func cmdDoctor(args []string) int {
 	}
 
 	// --- linger / persistence tripwires (§6.6)
-	if out, err := exec.Command("/usr/bin/loginctl", "show-user", "sy", "-p", "Linger").Output(); err == nil {
+	if _, lpErr := exec.LookPath("loginctl"); lpErr != nil {
+		warn("linger", "loginctl unavailable")
+	} else if out, err := exec.Command("/usr/bin/loginctl", "show-user", "sy", "-p", "Linger").Output(); err == nil {
 		if strings.TrimSpace(string(out)) == "Linger=no" {
 			ok("linger", "no")
 		} else {
 			warn("linger", strings.TrimSpace(string(out)))
 		}
 	} else {
-		warn("linger", "loginctl unavailable")
+		// loginctl exits non-zero when sy has no registered user record
+		// yet (first login not happened) — which implies Linger=no.
+		ok("linger", "no (no user record yet)")
 	}
 	if !fileExists("/var/spool/cron/crontabs/sy") {
 		ok("crontab", "empty")
@@ -132,8 +136,14 @@ func cmdDoctor(args []string) int {
 			fail("run", rc.path+" missing (run: systemd-tmpfiles --create /usr/lib/tmpfiles.d/sysh.conf)")
 			continue
 		}
-		if fi.Mode().Perm() != rc.mode {
-			fail("run", fmt.Sprintf("%s: mode %o, expected %o", rc.path, fi.Mode().Perm(), rc.mode))
+		// Mode.Perm() drops special bits; check the sticky bit separately
+		// (tripwire is deliberately 1777).
+		perm := uint32(fi.Mode().Perm())
+		sticky := fi.Mode()&os.ModeSticky != 0
+		expPerm := uint32(rc.mode) & 0o777
+		expSticky := uint32(rc.mode)&0o1000 != 0
+		if perm != expPerm || sticky != expSticky {
+			fail("run", fmt.Sprintf("%s: mode %o, expected %o", rc.path, perm|stickyOct(sticky), rc.mode))
 			continue
 		}
 		if g := groupOf(fi); g != rc.grp {
@@ -342,4 +352,13 @@ func statUIDCtl(fi os.FileInfo) int {
 		return int(st.Uid)
 	}
 	return -1
+}
+
+// stickyOct renders the sticky bit as its octal contribution for the
+// diagnostic message (0 or 01000).
+func stickyOct(on bool) uint32 {
+	if on {
+		return 0o1000
+	}
+	return 0
 }

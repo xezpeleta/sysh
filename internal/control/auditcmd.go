@@ -2,6 +2,7 @@ package control
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,7 +31,7 @@ func cmdAudit(args []string) int {
 	if follow {
 		argv = append(argv, "-f")
 	}
-	cmd := exec.Command("journalctl", argv[2:]...)
+	cmd := exec.Command("journalctl", argv[1:]...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysh audit: %v\n", err)
@@ -52,35 +53,12 @@ func cmdAudit(args []string) int {
 // formatJournalJSON pretty-prints one journalctl --output=json record
 // into a compact human-readable line, filtering to the useful fields.
 func formatJournalJSON(line string) string {
-	// Minimal field extraction without a JSON dependency cascade:
-	// journalctl json escapes reliably, so scan for our known keys.
-	get := func(key string) string {
-		// naive but bounded: find "key":"value"
-		pat := `"` + key + `":"`
-		i := strings.Index(line, pat)
-		if i < 0 {
-			return ""
-		}
-		rest := line[i+len(pat):]
-		j := strings.Index(rest, `"`)
-		if j < 0 {
-			return ""
-		}
-		return rest[:j]
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		// not a sysh record (boot lines etc.) — keep it identifiable
+		return strings.TrimSpace(line)
 	}
-	getNum := func(key string) string {
-		pat := `"` + key + `":`
-		i := strings.Index(line, pat)
-		if i < 0 {
-			return ""
-		}
-		rest := line[i+len(pat):]
-		j := 0
-		for j < len(rest) && (rest[j] >= '0' && rest[j] <= '9' || rest[j] == '-') {
-			j++
-		}
-		return rest[:j]
-	}
+	get := func(key string) string { return rec[key] }
 
 	ts := get("__REALTIME_TIMESTAMP")
 	when := ""
@@ -92,19 +70,22 @@ func formatJournalJSON(line string) string {
 		decision = "event"
 	}
 	parts := []string{when, decision}
+	if get("PHASE") == "pre" {
+		parts = append(parts, "pre")
+	}
 	if k := get("KEYID"); k != "" {
 		parts = append(parts, "key="+k)
 	}
-	if r := getNum("RULE"); r != "" && r != "-1" {
+	if r := get("RULE"); r != "" && r != "-1" {
 		parts = append(parts, "rule="+r)
 	}
 	if av := get("ARGV"); av != "" {
 		parts = append(parts, "argv="+av)
 	}
-	if e := getNum("EXIT"); e != "" {
+	if e := get("EXIT"); e != "" {
 		parts = append(parts, "exit="+e)
 	}
-	if d := getNum("DURATION_MS"); d != "" && d != "0" {
+	if d := get("DURATION_MS"); d != "" && d != "0" {
 		parts = append(parts, d+"ms")
 	}
 	if s := get("SCOPE"); s == "false" {
@@ -187,9 +168,17 @@ func cmdJournalGroup(args []string) int {
 }
 
 func addGroupMember(user, group string) error {
-	return exec.Command("/usr/sbin/gpasswd", "-a", user, group).Run()
+	gp, err := exec.LookPath("gpasswd")
+	if err != nil {
+		return err
+	}
+	return exec.Command(gp, "-a", user, group).Run()
 }
 
 func delGroupMember(user, group string) error {
-	return exec.Command("/usr/sbin/gpasswd", "-d", user, group).Run()
+	gp, err := exec.LookPath("gpasswd")
+	if err != nil {
+		return err
+	}
+	return exec.Command(gp, "-d", user, group).Run()
 }

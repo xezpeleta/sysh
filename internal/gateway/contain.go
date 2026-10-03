@@ -28,8 +28,19 @@ func EnsureNNP() error {
 		return fmt.Errorf("PR_SET_NO_NEW_PRIVS: %w", err)
 	}
 	os.Setenv(nnpEnv, "1")
-	argv := append([]string{os.Args[0]}, os.Args[1:]...)
-	return syscall.Exec(os.Args[0], argv, os.Environ())
+	// Re-exec the actual binary, not argv[0]: sshd may hand the login
+	// shell a non-absolute argv[0], and execve does no PATH lookup.
+	// /proc/self/exe is kernel-resolved to the real binary.
+	exe, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		ex, exErr := os.Executable()
+		if exErr != nil {
+			return fmt.Errorf("resolve self for NNP re-exec (argv[0]=%q): %w", os.Args[0], err)
+		}
+		exe = ex
+	}
+	argv := append([]string{exe}, os.Args[1:]...)
+	return syscall.Exec(exe, argv, os.Environ())
 }
 
 func prSetNoNewPrivs() error {

@@ -106,11 +106,14 @@ func authAdd() int {
 		return 1
 	}
 
-	// Canonical line: restrict [from] type base64 comment.
+	// Canonical line: restrict[,from] type base64 comment.
+	// authorized_keys options are comma-separated — OpenSSH's parser
+	// accepts `restrict from=…` visually but then fails to bind the key
+	// (verified live against Debian 12 sshd 9.2).
 	canon := strings.TrimRight(string(ssh.MarshalAuthorizedKey(key)), "\n")
 	entry := "restrict"
 	if from != "" {
-		entry += " " + from
+		entry += "," + from
 	}
 	entry += " " + canon
 

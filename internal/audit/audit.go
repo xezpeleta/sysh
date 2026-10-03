@@ -62,7 +62,10 @@ func (JournalSink) Emit(ev Event) error {
 	if ev.Rule != nil {
 		msg += fmt.Sprintf(" rule=%d", *ev.Rule)
 	}
-	if ev.Exit >= 0 {
+	// Outcome fields (EXIT, DURATION, SCOPE) exist only on post events;
+	// pre events record intent — the fail-closed guarantee — and their
+	// zero Exit/Scope must not be serialized as real values.
+	if ev.Exit >= 0 && ev.Phase == "post" {
 		msg += fmt.Sprintf(" exit=%d", ev.Exit)
 	}
 	if ev.DurationMS >= 0 && ev.Phase == "post" {
@@ -91,16 +94,18 @@ func (JournalSink) Emit(ev Event) error {
 	if ev.Rule != nil {
 		vars["RULE"] = fmt.Sprintf("%d", *ev.Rule)
 	}
-	if ev.Exit >= 0 {
+	if ev.Exit >= 0 && ev.Phase == "post" {
 		vars["EXIT"] = fmt.Sprintf("%d", ev.Exit)
 	}
-	if ev.DurationMS >= 0 {
+	if ev.DurationMS >= 0 && ev.Phase == "post" {
 		vars["DURATION_MS"] = fmt.Sprintf("%d", ev.DurationMS)
 	}
 	if ev.Unit != "" {
 		vars["UNIT"] = ev.Unit
 	}
-	vars["SCOPE"] = fmt.Sprintf("%t", ev.Scope)
+	if ev.Phase == "post" {
+		vars["SCOPE"] = fmt.Sprintf("%t", ev.Scope)
+	}
 	if ev.Phase != "" {
 		vars["PHASE"] = ev.Phase
 	}
