@@ -1,14 +1,20 @@
 # sysh
 
-**A login shell for AI agents on servers — with a record you can trust.**
+**A login shell for unattended AI agents on servers — privilege control
+and accountability, enforced on the server itself.**
 
-When you let an AI agent operate a server, the options are all-or-nothing:
-give it a root key (it can do anything, silently), or a normal user (it can
-do little, still silently). And even when you *do* let an agent run nearly
-unbounded — on a disposable host, rolled back afterwards — the question
-afterwards is
-always the same: *"it works, but what else did it do? which files did it
-change? which other hosts did it touch?"*
+It exists for sysadmin work you let an agent do *alone*: `sysh` bounds
+what the agent may do, and records what it actually did. It does not
+promise perfect bounds — an allowed command is still a real command —
+it promises bounds you set, and a record you can reconstruct the
+session from.
+
+And today the options are all-or-nothing: give the agent a root key
+(it can do anything, silently), or a normal user (it can do little,
+still silently). Even when you let it run nearly unbounded — on a
+disposable host, rolled back afterwards — the question afterwards is
+always the same: *"it works, but what else did it do? which files did
+it change? which other hosts did it touch?"*
 
 `sysh` makes the agent's SSH login itself the control point. The agent logs
 in over plain SSH as an unprivileged system user whose **login shell**:
