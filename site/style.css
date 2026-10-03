@@ -150,60 +150,14 @@ strong { color: var(--text); font-weight: 600; }
 }
 .btn-ghost:hover { border-color: var(--secondary); background: var(--card); }
 
-/* ---------- terminal window ---------- */
-.term {
+/* ---------- session replay widget ---------- */
+.pi-replay {
   max-width: 880px;
-  margin: 0 auto 1rem;
+  margin: 0 auto;
   padding: 0 1.5rem;
 }
-.term-window {
-  background: var(--term);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-}
-.term-bar {
-  display: flex; align-items: center; gap: 0.45rem;
-  padding: 0.65rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,0.45);
-}
-.term-bar i {
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--border); display: inline-block;
-}
-.term-bar i:nth-child(1) { background: #f07167; }
-.term-bar i:nth-child(2) { background: #f2c94c; }
-.term-bar i:nth-child(3) { background: #5c9fd6; }
-.term-bar .term-title {
-  margin-left: 0.6rem;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.04em;
-}
-.term-body {
-  margin: 0;
-  padding: 1.1rem 1.3rem 1.3rem;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.75;
-  color: var(--text);
-  overflow-x: auto;
-}
-.term-body .p { color: var(--accent-deep); font-weight: 700; }
-.term-body .c { color: var(--muted); }
-.term-body .ok { color: var(--green); }
-.term-body .no { color: var(--red); }
-.term-body .out { color: var(--secondary); }
-.term-caption {
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
+
+/* ---------- sections ---------- */
 
 /* ---------- sections ---------- */
 .wrap { max-width: 1060px; margin: 0 auto; padding: 0 1.5rem; }

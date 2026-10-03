@@ -87,7 +87,7 @@ is recorded.</p>
 argvs. Install generates a root-owned sudoers fragment limited to those
 argvs — nothing else:</p>
 <pre><code>[[rule]]
-argv = ["/usr/bin/systemctl", "restart", "wazuh-agent"]
+argv = ["/usr/bin/systemctl", "reload", "apache2"]
 path  = "/usr/bin/systemctl"
 privileged = true
 ack  = true          <span class="c"># required: you said so, out loud</span>

@@ -6,7 +6,9 @@
 <title>sysh — a login shell for unattended AI agents on servers</title>
 <meta name="description" content="sysh makes the agent's SSH login the control point: privilege control and accountability for unattended AI agents on sysadmin tasks, enforced on the server itself.">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="pi-replay.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect x=%270.8%27 y=%270.6%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%237ec88c%27/><rect x=%278.4%27 y=%275%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%2396b6dd%27/><rect x=%271.6%27 y=%279.4%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%23f0cf8e%27/></svg>"><rect width='16' height='16' rx='3' fill='%23e6e4df'/><path d='M4 5l3.5 3L4 11' stroke='%235b8def' stroke-width='1.7' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M9 11h3.5' stroke='%235b8def' stroke-width='1.7' stroke-linecap='round'/></svg>">
+<script src="pi-replay.js" defer></script>
 </head>
 <body>
 
@@ -40,26 +42,31 @@
   </div>
 </header>
 
-<div class="term">
-  <div class="term-window">
-    <div class="term-bar"><i></i><i></i><i></i><span class="term-title">agent session — web01.example.net</span></div>
-    <pre class="term-body"><span class="p">$</span> ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'
-<span class="out"> 13:04:01 up 41 days,  1 user,  load average: 0.14, 0.18, 0.09</span>   <span class="ok">✓ allowed</span>
+<figure class="pi-replay" data-pi-replay="replay.json">
+  <pre class="pi-replay__fallback">prompt: web01 is dropping requests under load — check the server,
+raise the Apache worker ceiling if that's it, make it live.
 
-<span class="p">$</span> ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart wazuh-agent'
-<span class="out">{"sysh":1,"class":"exec","rule":13,"PRIV":true,"exit":0}</span>   <span class="ok">✓ pre-authorized root verb</span>
+agent: I'll look at Apache and its error log on web01, then raise the
+ceiling through the enumerated config write and reload.
 
-<span class="p">$</span> ssh -i agent.key sy@web01.example.net '/usr/bin/sudo -n id'
-<span class="no">{"sysh":1,"class":"denied","detail":"denied by deny rule","exit":125}</span>   <span class="no">✗ denied by policy</span>
+$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl is-active apache2'
+  active
+$ ssh -i agent.key sy@web01.example.net '/usr/bin/tail -n 40 /var/log/apache2/error.log'
+  ... server reached MaxRequestWorkers setting, consider raising ...
+$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'
+  {"sysh":1,"class":"denied","detail":"no rule allows this argv","exit":125}
+$ cat new.conf | ssh -i agent.key sy@web01.example.net     '/usr/bin/tee /etc/apache2/conf-available/security.conf'
+  {"sysh":1,"class":"exec","PRIV":true,"exit":0}
+$ ssh -i agent.key sy@web01.example.net '/usr/sbin/apache2ctl configtest'
+  Syntax OK
+$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl reload apache2'
+  {"sysh":1,"class":"exec","PRIV":true,"exit":0}
 
-<span class="c"># on the server — the record the agent cannot forge or erase:</span>
-<span class="p">$</span> journalctl -t sysh -o verbose | grep -E 'KEYID|PRIV|ARGV'
-<span class="out">    KEYID=sy/web01.example.net
-    ARGV=["/usr/bin/systemctl","restart","wazuh-agent"]
-    PRIV=true</span>   <span class="c">+ sudo's own PAM line, independently</span></pre>
-  </div>
-  <p class="term-caption">every exec attempt — allowed or denied — lands in journald and auditd</p>
-</div>
+answer: raised MaxRequestWorkers to 150 in the one Apache file the
+operator enumerated, validated, reloaded. The mariadb restart was refused
+(exit 125) — and that refusal is in journalctl -t sysh too.</pre>
+  <figcaption>an emulated agent session — allowed where the policy allows, refused where it doesn't</figcaption>
+</figure>
 
 <main class="wrap">
 
@@ -173,8 +180,8 @@
     systemd scopes with resource caps and output limits.</li>
     <li><strong>Fine-grained profiles by composition</strong> — the argv
     policy plus ordinary OS permissions (groups, ACLs, ownership) shapes
-    access like <em>“modify the Wazuh config as a user, restart as the one
-    root verb”</em>.</li>
+    access like <em>“read the web server's logs and config, write the
+    enumerated files, validate and reload”</em>.</li>
     <li><strong>Debian / Ubuntu</strong> today; designed for the KVM-era
     fleet where journald and auditd are already there.</li>
   </ul>
