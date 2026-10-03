@@ -89,7 +89,7 @@ func authAdd() int {
 		}
 	}
 	if !validKeyID(keyID) {
-		fmt.Fprintf(os.Stderr, "sysh auth add: invalid key id %q (allowed: letters, digits, @ . _ -, 1..64 chars)\n", keyID)
+		fmt.Fprintf(os.Stderr, "sysh auth add: invalid key id %q (allowed: letters, digits, @ . _ - /, 1..64 chars)\n", keyID)
 		return 1
 	}
 
@@ -241,7 +241,7 @@ func validKeyID(id string) bool {
 	for _, r := range id {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '@', r == '.', r == '_', r == '-':
+			r == '@', r == '.', r == '_', r == '-', r == '/':
 		default:
 			return false
 		}
