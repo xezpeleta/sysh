@@ -33,6 +33,7 @@ install -m 0644 debian/audit/60-sysh.rules "$STAGE/usr/share/sysh/audit-rules.te
 install -m 0644 testdata/policy.example.toml "$STAGE/usr/share/sysh/policy.example.toml"
 install -m 0644 LICENSE "$STAGE/usr/share/doc/sysh/copyright" 2>/dev/null || true
 install -m 0644 README.md "$STAGE/usr/share/doc/sysh/README.md" 2>/dev/null || true
+gzip -9n < debian/changelog > "$STAGE/usr/share/doc/sysh/changelog.gz" 2>/dev/null || true
 
 # --- permissions: root-owned everywhere; the deb is installed by root
 dpkg-deb --root-owner-group --build "$STAGE" "$OUT/sysh_${VERSION}_amd64.deb"

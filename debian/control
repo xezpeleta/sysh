@@ -10,4 +10,5 @@ Description: login shell for AI agents on servers
  its login shell enforces an operator-written argv policy. No shell
  semantics, no tokens, all enforcement and recording server-side.
 Depends: systemd
-Suggests: auditd, openssh-server
+Recommends: auditd
+Suggests: openssh-server

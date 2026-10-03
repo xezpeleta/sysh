@@ -21,6 +21,7 @@ func cmdDoctor(args []string) int {
 	ok := func(name, detail string) { fmt.Printf("ok    %-24s %s\n", name, detail) }
 	warn := func(name, detail string) { fmt.Printf("WARN  %-24s %s\n", name, detail); warns++ }
 	fail := func(name, detail string) { fmt.Printf("FAIL  %-24s %s\n", name, detail); fails++ }
+	info := func(name, detail string) { fmt.Printf("info   %-24s %s\n", name, detail) }
 
 	// --- sy user
 	u, err := user.Lookup("sy")
@@ -245,7 +246,11 @@ func cmdDoctor(args []string) int {
 			warn("user manager", "active; delegation undetermined")
 		}
 	} else {
-		warn("user manager", "not running; gateway falls back to no-scope exec (scope=false in events)")
+		// Normal between agent logins: pam_systemd starts the user
+		// manager at login, before the shell runs — the first agent
+		// command after boot races it only occasionally, and the
+		// gateway's no-scope fallback covers that. Informational.
+		info("user manager", "not running (normal between logins; starts at agent login via PAM; rare first-command races use the no-scope fallback)")
 	}
 
 	// --- journald lost-message check (§8.2)

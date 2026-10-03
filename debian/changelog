@@ -1,0 +1,21 @@
+sysh (0.1.0) unstable; urgency=medium
+
+  * Phase 1: argv-policy login shell for AI agents.
+    - Gateway: printable-ASCII argv split, exact-length matching, opt-in
+      rest patterns, deny rules with prefix semantics, per-rule timeouts
+      with process-group kill backstop, 1 MiB output cap.
+    - Containment: NoNewPrivs re-exec, seccomp not yet (phase 2),
+      systemd scope execution with no-scope fallback, ptrace_scope=1.
+    - Events: journald records with kernel attestation (_UID, _AUDIT_
+      LOGINUID), key attribution (fingerprint, key id), policy hash,
+      pre/post phases; auditd integration (sysh_exec, sysh_policy,
+      sysh_lockdown keys).
+  * Control channel: auth add/list/remove (option allowlist, canonical
+    comma-separated authorized_keys lines, fingerprint dedup), policy
+    install/lint (denylist, warn-ack classes, permissive gated on
+    active auditd rules), doctor (22 checks), lockdown, journal-group.
+  * Packaging: systemd tmpfiles, sy user with shell-takeover refusal,
+    sshd drop-in with validated rollback, audit rules with uid
+    substitution, selfcheck in postinst.
+
+ -- xezpeleta <xezpeleta@users.noreply.github.com>  Sat, 03 Oct 2026 12:00:00 +0200
