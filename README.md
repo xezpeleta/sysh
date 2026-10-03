@@ -184,10 +184,12 @@ make smoke       # local binary checks (NNP/DUMPABLE selfcheck, fail-closed path
 make deb         # dist/sysh_<version>_amd64.deb
 ```
 
-Install on a Debian/Ubuntu host (VM recommended for the first one):
+Install on a Debian/Ubuntu host (VM recommended for the first one) —
+build the deb yourself, or grab it from the
+[releases](https://github.com/xezpeleta/sysh/releases) page:
 
 ```sh
-sudo apt install ./dist/sysh_*_amd64.deb   # sets up user, dirs, sshd, auditd
+sudo apt install ./sysh_*_amd64.deb       # sets up user, dirs, sshd, auditd
 sudo sysh auth add                          # paste: restrict ssh-ed25519 AAAA… agent-name
 sudo sysh policy install < /usr/share/sysh/policy.example.toml
 sudo sysh doctor
