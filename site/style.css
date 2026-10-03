@@ -47,6 +47,25 @@ strong { color: var(--text); font-weight: 600; }
 .announce a { color: var(--accent-deep); font-weight: 600; }
 .announce .dot { color: var(--accent); margin-right: 0.5em; }
 
+/* ---------- logo: three settling tetrominoes ---------- */
+.logo {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 0.8em);
+  grid-template-rows: repeat(6, 0.8em);
+  gap: 0.18em;
+  flex: none;
+}
+.logo b { border-radius: 0.2em; display: block; }
+.logo .g { background: #7ec88c; }   /* pastel green  */
+.logo .u { background: #96b6dd; }   /* pastel blue   */
+.logo .m { background: #f0cf8e; }   /* pastel amber  */
+.logo .a1 { grid-area: 1 / 1; } .logo .a2 { grid-area: 1 / 2; }
+.logo .a3 { grid-area: 2 / 2; } .logo .a4 { grid-area: 2 / 3; }
+.logo .b1 { grid-area: 3 / 2; } .logo .b2 { grid-area: 3 / 3; }
+.logo .b3 { grid-area: 4 / 2; } .logo .b4 { grid-area: 4 / 3; }
+.logo .c1 { grid-area: 5 / 1; } .logo .c2 { grid-area: 5 / 2; }
+.logo .c3 { grid-area: 5 / 3; } .logo .c4 { grid-area: 6 / 3; }
+
 /* ---------- nav ---------- */
 .nav {
   display: flex;
@@ -57,20 +76,12 @@ strong { color: var(--text); font-weight: 600; }
   padding: 1.1rem 1.5rem;
 }
 .brand {
-  display: flex; align-items: center; gap: 0.6rem;
+  display: flex; align-items: center; gap: 0.7rem;
   font-family: var(--mono); font-weight: 700; font-size: 1.05rem;
   color: var(--text);
 }
 .brand:hover { text-decoration: none; }
-.mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--card);
-  color: var(--accent);
-  font-size: 0.95rem; font-weight: 700;
-}
+.brand .logo { font-size: 5px; }
 .nav-links a {
   font-size: 11px;
   letter-spacing: 0.1em;
@@ -93,6 +104,7 @@ strong { color: var(--text); font-weight: 600; }
     linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 34px 34px;
 }
+.hero .logo { font-size: 17px; margin: 0 auto 1.8rem; }
 .hero h1 {
   font-family: var(--serif);
   font-style: italic;
