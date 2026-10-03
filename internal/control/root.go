@@ -19,6 +19,7 @@ var (
 	policyPath   = "/etc/sysh/policy.toml"
 	flagsDir     = "/etc/sysh/flags"
 	tripwirePath = "/run/sysh-tripwire/lockdown"
+	sudoersPath  = "/etc/sudoers.d/60-sysh"
 
 	// ownerUID is the uid that must own the /etc/sysh tree: root in
 	// production; tests set it to their own uid.

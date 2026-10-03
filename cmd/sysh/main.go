@@ -1,7 +1,9 @@
 // sysh — a login shell for AI agents on servers.
 //
 // Dispatch (§3.2): the sy user's login shell is invoked by sshd as
-//   sysh -c '<command>'
+//
+//	sysh -c '<command>'
+//
 // for every agent channel session. All other invocations are the
 // operator's local control commands (root only) or errors.
 package main
@@ -67,9 +69,17 @@ func run() int {
 // lives here — not inside gateway.Run — so tests calling gateway.Run
 // never re-exec the test binary.
 func gatewayMain(cmd string) int {
-	if err := gateway.EnsureNNP(); err != nil {
-		fmt.Fprintf(os.Stderr, `{"sysh":1,"class":"internal_error","detail":"NNP setup failed: %s","exit":125}`+"\n", err)
-		return 125
+	cfg := gateway.ProdConfig()
+
+	// NoNewPrivs is skipped only when the installed policy declares
+	// privileged rules: sudo needs setuid to honor their exact-argv
+	// grants. Fail closed — any load error keeps NNP on, and a policy
+	// without privileged rules always gets NNP (§6.7).
+	if !gateway.PolicyUsesPrivileged(cfg.PolicyPath, cfg.PolicyOwner) {
+		if err := gateway.EnsureNNP(); err != nil {
+			fmt.Fprintf(os.Stderr, `{"sysh":1,"class":"internal_error","detail":"NNP setup failed: %s","exit":125}`+"\n", err)
+			return 125
+		}
 	}
 	if err := gateway.SetDumpable(); err != nil {
 		fmt.Fprintf(os.Stderr, `{"sysh":1,"class":"internal_error","detail":"PR_SET_DUMPABLE failed: %s","exit":125}`+"\n", err)
@@ -80,8 +90,6 @@ func gatewayMain(cmd string) int {
 		return 125
 	}
 	gateway.Umask0077()
-
-	cfg := gateway.ProdConfig()
 	return gateway.Run(cfg, cmd)
 }
 

@@ -40,10 +40,10 @@ type Compiled struct {
 }
 
 type CompiledRule struct {
-	Rule       *Rule
-	Positions  []Position
-	HasRest    bool
-	Rest       Position
+	Rule      *Rule
+	Positions []Position
+	HasRest   bool
+	Rest      Position
 }
 
 // Match applies §6.2: deny rules first (prefix semantics), then the

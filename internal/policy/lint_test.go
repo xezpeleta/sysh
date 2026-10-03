@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -30,6 +31,10 @@ func stdFS() *memFS {
 		addFile("/usr/bin/systemctl", 0o755, 0).
 		addFile("/usr/bin/journalctl", 0o755, 0).
 		addFile("/usr/bin/curl", 0o755, 0)
+}
+
+func setuidFS() *memFS {
+	return stdFS().addFile("/usr/bin/fakesetuid", os.ModeSetuid|0o755, 0)
 }
 
 func TestLintDenylistShells(t *testing.T) {
@@ -114,16 +119,66 @@ func TestLintPathChecks(t *testing.T) {
 	}
 }
 
-func TestLintPrivilegedTimeout(t *testing.T) {
-	p := pol(ModeEnforcing, Rule{Argv: []string{"/usr/bin/systemctl", "restart", "nginx"}, Path: "/usr/bin/systemctl", Privileged: true})
-	found := false
-	for _, f := range Lint(p, stdFS()) {
-		if f.Severity == SevWarning && strings.Contains(f.Msg, "timeout") {
-			found = true
-		}
+func TestLintPrivilegedGuardrails(t *testing.T) {
+	base := Rule{Argv: []string{"/usr/bin/systemctl", "restart", "nginx"}, Path: "/usr/bin/systemctl", Privileged: true, Ack: true, Timeout: 60}
+
+	// timeout is now mandatory, not a warning
+	p := pol(ModeEnforcing, base)
+	base.Timeout = 0
+	p = pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "explicit timeout") {
+		t.Errorf("privileged without timeout must error: %v", msgs)
 	}
-	if !found {
-		t.Error("privileged rule without timeout should warn")
+	base.Timeout = 60
+
+	// ack required
+	base.Ack = false
+	p = pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "ack = true") {
+		t.Errorf("privileged without ack must error: %v", msgs)
+	}
+	base.Ack = true
+
+	// rest forbidden
+	base.Rest = "[a-z]+"
+	p = pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "cannot use rest") {
+		t.Errorf("privileged with rest must error: %v", msgs)
+	}
+	base.Rest = ""
+
+	// whitespace in argv elements forbidden
+	base.Argv = []string{"/usr/bin/systemctl", "restart", "two words"}
+	p = pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "whitespace") {
+		t.Errorf("privileged with whitespace argv must error: %v", msgs)
+	}
+	base.Argv = []string{"/usr/bin/systemctl", "restart", "nginx"}
+
+	// permissive + privileged refused
+	p = pol(ModePermissive, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "root-equivalent") {
+		t.Errorf("permissive+privileged must error: %v", msgs)
+	}
+
+	// valid privileged rule lints clean of errors
+	p = pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); msgs != nil {
+		t.Errorf("valid privileged rule must not error: %v", msgs)
+	}
+}
+
+func TestLintPrivilegedSetuidConflict(t *testing.T) {
+	priv := Rule{Argv: []string{"/usr/bin/systemctl", "restart", "nginx"}, Path: "/usr/bin/systemctl", Privileged: true, Ack: true, Timeout: 60}
+	setuid := Rule{Argv: []string{"/usr/bin/fakesetuid", "/data"}, Path: "/usr/bin/fakesetuid"}
+	p := pol(ModeEnforcing, priv, setuid)
+	if msgs := lintErrs(t, p, setuidFS()); !hasMsg(msgs, "setuid") {
+		t.Errorf("setuid allow-rule with privileged rules present must error: %v", msgs)
+	}
+	// without privileged rules the same setuid rule is fine (NNP covers it)
+	p2 := pol(ModeEnforcing, setuid)
+	if msgs := lintErrs(t, p2, setuidFS()); msgs != nil {
+		t.Errorf("setuid allow-rule without privileged rules must pass: %v", msgs)
 	}
 }
 
@@ -197,7 +252,7 @@ rest = "[a-z0-9@._\\-]+"
 
 func TestParseRejects(t *testing.T) {
 	bad := []string{
-		`version = 1`,                                           // wrong version
+		`version = 1`, // wrong version
 		`version = 2
 mode = "yolo"`, // bad mode
 		`version = 2

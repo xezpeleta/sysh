@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Finding severities.
@@ -36,16 +37,16 @@ func (f Finding) String() string {
 
 // FS abstracts filesystem checks for the linter (tests use fakes).
 type FS interface {
-	Stat(path string) (os.FileInfo, error)      // follows symlinks (realpath check base)
+	Stat(path string) (os.FileInfo, error) // follows symlinks (realpath check base)
 	Lstat(path string) (os.FileInfo, error)
 	EvalSymlinks(path string) (string, error)
 }
 
 type realFS struct{}
 
-func (realFS) Stat(p string) (os.FileInfo, error)      { return os.Stat(p) }
-func (realFS) Lstat(p string) (os.FileInfo, error)     { return os.Lstat(p) }
-func (realFS) EvalSymlinks(p string) (string, error)   { return filepath.EvalSymlinks(p) }
+func (realFS) Stat(p string) (os.FileInfo, error)    { return os.Stat(p) }
+func (realFS) Lstat(p string) (os.FileInfo, error)   { return os.Lstat(p) }
+func (realFS) EvalSymlinks(p string) (string, error) { return filepath.EvalSymlinks(p) }
 
 // RealFS returns the real filesystem implementation.
 func RealFS() FS { return realFS{} }
@@ -66,6 +67,9 @@ func Lint(p *Policy, fs FS) []Finding {
 
 	for i := range p.Rules {
 		r := &p.Rules[i]
+		if r.Privileged && !r.Deny {
+			hasPrivileged = true
+		}
 
 		// Pattern safety on every position (§6.2).
 		for _, pos := range r.Argv {
@@ -137,8 +141,24 @@ func Lint(p *Policy, fs FS) []Finding {
 
 		if r.Privileged {
 			hasPrivileged = true
+			// Privileged rules run via exact-argv sudoers grants; the
+			// guardrails below are what make generation safe.
+			if r.Deny {
+				findings = append(findings, Finding{SevError, i, "deny rule cannot be privileged"})
+			}
+			if r.Rest != "" {
+				findings = append(findings, Finding{SevError, i, "privileged rule cannot use rest (sudoers grants are exact argv)"})
+			}
+			if !r.Ack {
+				findings = append(findings, Finding{SevError, i, "privileged rule requires ack = true (deliberate root-exec opt-in)"})
+			}
 			if r.Timeout == 0 {
-				findings = append(findings, Finding{SevWarning, i, "privileged rule without explicit timeout"})
+				findings = append(findings, Finding{SevError, i, "privileged rule requires an explicit timeout"})
+			}
+			for _, a := range r.Argv {
+				if strings.ContainsAny(a, " \t") {
+					findings = append(findings, Finding{SevError, i, fmt.Sprintf("privileged rule argv element %q contains whitespace (unrepresentable in sudoers)", a)})
+				}
 			}
 		}
 
@@ -152,7 +172,21 @@ func Lint(p *Policy, fs FS) []Finding {
 	}
 
 	if hasPrivileged {
-		findings = append(findings, Finding{SevInfo, -1, "policy contains privileged rules; they require human approval (phase 2) and never execute from the agent"})
+		if p.Mode == ModePermissive {
+			findings = append(findings, Finding{SevError, -1, "permissive mode with privileged rules is root-equivalent; refuse"})
+		}
+		// Without NNP (required so sudo can elevate), a setuid binary
+		// allowed by a normal rule would silently grant root — flag it.
+		for i := range p.Rules {
+			r := &p.Rules[i]
+			if r.Deny || r.Privileged || r.Path == "" {
+				continue
+			}
+			if fi, err := fs.Stat(r.Path); err == nil && fi.Mode()&os.ModeSetuid != 0 {
+				findings = append(findings, Finding{SevError, i, fmt.Sprintf("path %q is setuid while the policy has privileged rules (NNP is off on this host) — remove the rule or the privileged ones", r.Path)})
+			}
+		}
+		findings = append(findings, Finding{SevInfo, -1, "policy contains privileged rules: they execute as root via exact-argv sudo (generated at install), and the gateway runs without NoNewPrivs on this host"})
 	}
 	if p.Mode == ModePermissive {
 		findings = append(findings, Finding{SevInfo, -1, "permissive mode: every well-formed argv runs as the unprivileged sy user — treat the host as disposable; install refuses it without active auditd rules"})

@@ -171,10 +171,20 @@ its §13). What exists today, in this repo:
   (user setup, tmpfiles.d, sshd drop-in with `sshd -t` validation and
   rollback, auditd rules with UID substitution, `Match all` terminator).
 
-Phase 2 (approval queue, privileged execution, `sysh-result`) and the
-`sysh-mcp` distribution are intentionally deferred until phase 1 is
-reviewed in production. Privileged rules parse, lint, and are refused
-at runtime with exit 126 — the hooks are in place.
+**Privileged rules (phase 1.5) execute as root via sudo.** A rule with
+`privileged = true` runs through an exact-argv `sudo -n` grant that
+`sysh policy install` generates into `/etc/sudoers.d/60-sysh` (single
+source of truth: the policy) and validates with `visudo -cf` before
+activating. The linter enforces the guardrails: `ack = true`, explicit
+`timeout`, no `rest`, no whitespace inside argv elements. Events carry
+`PRIV=true` and sudo's own journal logging adds a second, independent
+record of every root exec. **Honest cost:** the gateway must run
+without NoNewPrivs while such a policy is installed (sudo needs
+setuid), so the linter also rejects setuid binaries on non-privileged
+allow rules in that policy. With zero privileged rules nothing changes.
+
+Phase 2 (approval queue, `sysh-result`, seccomp) and the `sysh-mcp`
+distribution are still deferred.
 
 ### Build & try it
 

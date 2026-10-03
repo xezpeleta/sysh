@@ -28,8 +28,8 @@ type Rule struct {
 	Argv       []string `toml:"argv"`
 	Path       string   `toml:"path"` // absolute binary path (allow rules)
 	Deny       bool     `toml:"deny"`
-	Rest       string   `toml:"rest"`      // opt-in pattern for extra positions
-	Timeout    int      `toml:"timeout"`   // seconds, 1..3600
+	Rest       string   `toml:"rest"`    // opt-in pattern for extra positions
+	Timeout    int      `toml:"timeout"` // seconds, 1..3600
 	Privileged bool     `toml:"privileged"`
 	Ack        bool     `toml:"ack"` // acknowledges linter warnings on this rule
 }

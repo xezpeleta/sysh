@@ -163,15 +163,15 @@ func cmdDoctor(args []string) int {
 	} else {
 		cfg := parseSSHD(string(out))
 		want := map[string]string{
-			"authorizedkeysfile":  "/etc/sysh/authorized_keys",
+			"authorizedkeysfile":    "/etc/sysh/authorized_keys",
 			"authenticationmethods": "publickey",
-			"exposeauthinfo":      "yes",
-			"permittty":           "no",
-			"disableforwarding":   "yes",
-			"x11forwarding":       "no",
-			"allowagentforwarding": "no",
-			"permittunnel":        "no",
-			"permituserrc":        "no",
+			"exposeauthinfo":        "yes",
+			"permittty":             "no",
+			"disableforwarding":     "yes",
+			"x11forwarding":         "no",
+			"allowagentforwarding":  "no",
+			"permittunnel":          "no",
+			"permituserrc":          "no",
 		}
 		drift := []string{}
 		for k, v := range want {
@@ -198,8 +198,10 @@ func cmdDoctor(args []string) int {
 	// --- auditd (§8.4)
 	polInstalled := fileExists(policyPath)
 	permissive := false
+	var installedPolicy *policy.Policy
 	if polInstalled {
 		if p, _, _, err := policy.Load(policyPath, 0); err == nil {
+			installedPolicy = p
 			permissive = p.Mode == policy.ModePermissive
 			findings := policy.Lint(p, policy.RealFS())
 			errs := 0
@@ -262,6 +264,30 @@ func cmdDoctor(args []string) int {
 			warn("journal drops", fmt.Sprintf("%d suppression notice(s) from systemd-journald in 24h", n))
 		} else {
 			ok("journal drops", "none in 24h")
+		}
+	}
+
+	// --- privileged rules / sudoers grant (§6.4)
+	if installedPolicy != nil {
+		if countPrivileged(installedPolicy) > 0 {
+			if !sudoAvailableFn() {
+				fail("privileged rules", "sudo not installed but the policy has privileged rules; execs will fail")
+			} else {
+				ok("privileged rules", fmt.Sprintf("%d rule(s), exact-argv sudo grants", countPrivileged(installedPolicy)))
+			}
+			want, _ := buildSudoers(installedPolicy)
+			if got, err := os.ReadFile(sudoersPath); err != nil {
+				fail("sudoers grant", fmt.Sprintf("policy has privileged rules but %s is missing; re-run policy install", sudoersPath))
+			} else if string(got) != want {
+				fail("sudoers grant", fmt.Sprintf("%s does not match the installed policy; re-run policy install", sudoersPath))
+			} else {
+				ok("sudoers grant", sudoersPath+" matches policy")
+			}
+			info("NNP", "gateway runs without NoNewPrivs while the policy has privileged rules (sudo setuid); setuid allow-rules other than the privileged ones are lint-blocked")
+		} else if fileExists(sudoersPath) {
+			warn("sudoers grant", fmt.Sprintf("%s exists but the policy has no privileged rules; re-run policy install", sudoersPath))
+		} else {
+			ok("sudoers grant", "none (no privileged rules)")
 		}
 	}
 

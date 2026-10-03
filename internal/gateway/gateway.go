@@ -166,13 +166,6 @@ func Run(cfg Config, cmd string) int {
 		return deny(result.ClassDenied, detail, result.ExitDenied, ev)
 	}
 
-	if dec.Rule != nil && dec.Rule.Privileged {
-		ev := withDec(baseEvent, audit.DecisionPrivileged)
-		return deny(result.ClassPrivileged,
-			fmt.Sprintf("argv matches privileged rule %d; human approval required (phase 2 not yet available)", dec.RuleIdx),
-			result.ExitPrivileged, ev)
-	}
-
 	// Resolve the binary path.
 	path := ""
 	if dec.Rule != nil && dec.Rule.Path != "" {
@@ -194,6 +187,22 @@ func Run(cfg Config, cmd string) int {
 		timeout = dec.Rule.Timeout
 	}
 
+	if dec.Rule != nil && dec.Rule.Privileged {
+		// Privileged rules execute as root through the exact-argv
+		// sudoers grant generated at policy install (§6.4). Events
+		// keep recording the agent's argv; PRIV=1 marks the elevation.
+		// The grant only exists if the operator installed this policy,
+		// and only for this exact argv — sudo refuses anything else.
+		baseEvent.Privileged = true
+		var werr error
+		argv, path, werr = wrapSudo(argv, path)
+		if werr != nil {
+			ev := withDec(baseEvent, audit.DecisionInternal)
+			ev.Detail = werr.Error()
+			return deny(result.ClassInternal, werr.Error(), result.ExitDenied, ev)
+		}
+	}
+
 	// Pre-exec event, fail closed (P5): if the record cannot be written,
 	// the exec does not happen.
 	pre := withDec(baseEvent, audit.DecisionAllow)
@@ -204,6 +213,40 @@ func Run(cfg Config, cmd string) int {
 	}
 
 	return execChild(cfg, emit, ident, argv, path, dec, timeout, start, baseEvent)
+}
+
+// SudoPath is where the wrapper expects sudo (Debian/Ubuntu layout).
+const SudoPath = "/usr/bin/sudo"
+
+// wrapSudo rewrites an allowed privileged argv to run through sudo
+// with an exact grant: [sudo, -n, --, binary, args...]. The original
+// argv stays in the audit trail; only the exec changes.
+func wrapSudo(argv []string, path string) ([]string, string, error) {
+	if _, err := os.Stat(SudoPath); err != nil {
+		return nil, "", fmt.Errorf("sudo unavailable at %s (privileged rules require it; install sudo or remove the privileged rules)", SudoPath)
+	}
+	wrapped := make([]string, 0, len(argv)+3)
+	wrapped = append(wrapped, SudoPath, "-n", "--")
+	wrapped = append(wrapped, path)
+	wrapped = append(wrapped, argv[1:]...)
+	return wrapped, SudoPath, nil
+}
+
+// PolicyUsesPrivileged reports whether the loaded policy contains any
+// non-deny privileged rule. The gateway must skip NoNewPrivs in that
+// case (sudo needs setuid); fail closed: any load error returns false,
+// keeping NNP on.
+func PolicyUsesPrivileged(policyPath string, ownerUID int) bool {
+	pol, _, _, err := policy.Load(policyPath, ownerUID)
+	if err != nil {
+		return false
+	}
+	for i := range pol.Rules {
+		if pol.Rules[i].Privileged && !pol.Rules[i].Deny {
+			return true
+		}
+	}
+	return false
 }
 
 func withDec(ev audit.Event, decision string) audit.Event {
@@ -577,4 +620,3 @@ var signalNotify = func(ch chan<- os.Signal) {
 		}
 	}()
 }
-

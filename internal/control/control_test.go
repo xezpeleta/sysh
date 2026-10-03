@@ -40,21 +40,27 @@ func newTestEnv(t *testing.T) string {
 
 	saved := struct {
 		etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath string
+		sudoersPath                                                           string
 		ownerUID                                                              int
 		stdin                                                                 io.Reader
 		lintFS                                                                policy.FS
 		auditRulesActiveFn                                                    func() bool
+		sudoAvailableFn                                                       func() bool
+		visudoCheckFn                                                         func(string) error
 		addGroupFn, delGroupFn                                                func(string, string) error
-	}{etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath,
-		ownerUID, stdin, lintFS, auditRulesActiveFn, addGroupFn, delGroupFn}
+	}{etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath, sudoersPath,
+		ownerUID, stdin, lintFS, auditRulesActiveFn, sudoAvailableFn, visudoCheckFn, addGroupFn, delGroupFn}
 
 	t.Cleanup(func() {
 		etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath =
 			saved.etcDir, saved.authKeysPath, saved.keysMapPath, saved.policyPath, saved.flagsDir, saved.tripwirePath
+		sudoersPath = saved.sudoersPath
 		ownerUID = saved.ownerUID
 		stdin = saved.stdin
 		lintFS = saved.lintFS
 		auditRulesActiveFn = saved.auditRulesActiveFn
+		sudoAvailableFn = saved.sudoAvailableFn
+		visudoCheckFn = saved.visudoCheckFn
 		addGroupFn, delGroupFn = saved.addGroupFn, saved.delGroupFn
 		os.RemoveAll(base)
 	})
@@ -65,10 +71,13 @@ func newTestEnv(t *testing.T) string {
 	policyPath = filepath.Join(etc, "policy.toml")
 	flagsDir = filepath.Join(etc, "flags")
 	tripwirePath = filepath.Join(base, "run", "sysh-tripwire", "lockdown")
+	sudoersPath = filepath.Join(base, "etc", "sudoers.d", "60-sysh")
 	ownerUID = os.Getuid()
 	stdin = strings.NewReader("")
 	lintFS = newFakeFS()
 	auditRulesActiveFn = func() bool { return false }
+	sudoAvailableFn = func() bool { return false }
+	visudoCheckFn = func(string) error { return nil }
 	addGroupFn = func(string, string) error { return nil }
 	delGroupFn = func(string, string) error { return nil }
 
@@ -127,9 +136,9 @@ func (f fakeFI) Sys() any {
 
 func newFakeFS() *fakeFS {
 	return &fakeFS{entries: map[string]fakeFI{
-		"/":       {name: "/", mode: os.ModeDir | 0o755, uid: 0},
-		"/usr":    {name: "/usr", mode: os.ModeDir | 0o755, uid: 0},
-		"/bin":    {name: "/bin", mode: os.ModeDir | 0o755, uid: 0},
+		"/":    {name: "/", mode: os.ModeDir | 0o755, uid: 0},
+		"/usr": {name: "/usr", mode: os.ModeDir | 0o755, uid: 0},
+		"/bin": {name: "/bin", mode: os.ModeDir | 0o755, uid: 0},
 	}}
 }
 
@@ -515,5 +524,149 @@ func TestAtomicWrite(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".sysh-tmp-") {
 			t.Fatalf("temp file litter: %s", e.Name())
 		}
+	}
+}
+
+func TestPolicyInstallPrivilegedGrant(t *testing.T) {
+	newTestEnv(t)
+	lintFS.(*fakeFS).
+		addDir("/usr/bin", 0o755, 0).
+		addFile("/usr/bin/systemctl", 0o755, 0)
+	sudoAvailableFn = func() bool { return true }
+	visudoCheckFn = func(content string) error {
+		if !strings.Contains(content, "NOPASSWD: /usr/bin/systemctl restart nginx") {
+			return fmt.Errorf("grant missing from fragment:\n%s", content)
+		}
+		return nil
+	}
+
+	priv := `version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "nginx"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+`
+	setStdin(priv)
+	if rc := cmdPolicy([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc = %d, want 0", rc)
+	}
+	got := readFile(t, sudoersPath)
+	if !strings.Contains(got, "sy ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx") {
+		t.Fatalf("fragment grant wrong:\n%s", got)
+	}
+	if !strings.Contains(got, "!setenv") {
+		t.Fatalf("fragment must deny env passthrough:\n%s", got)
+	}
+	fi, err := os.Stat(sudoersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o440 {
+		t.Fatalf("fragment mode = %o, want 0440", fi.Mode().Perm())
+	}
+}
+
+func TestPolicyInstallPrivilegedNoSudo(t *testing.T) {
+	newTestEnv(t)
+	lintFS.(*fakeFS).
+		addDir("/usr/bin", 0o755, 0).
+		addFile("/usr/bin/systemctl", 0o755, 0)
+	sudoAvailableFn = func() bool { return false }
+
+	priv := `version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "nginx"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+`
+	setStdin(priv)
+	if rc := cmdPolicy([]string{"install"}); rc != 1 {
+		t.Fatalf("install rc = %d, want 1", rc)
+	}
+	if _, err := os.Stat(policyPath); !os.IsNotExist(err) {
+		t.Fatal("refused install must not write the policy")
+	}
+}
+
+func TestPolicyInstallPrivilegedVisudoFail(t *testing.T) {
+	newTestEnv(t)
+	lintFS.(*fakeFS).
+		addDir("/usr/bin", 0o755, 0).
+		addFile("/usr/bin/systemctl", 0o755, 0).
+		addFile("/usr/bin/uptime", 0o755, 0)
+	sudoAvailableFn = func() bool { return true }
+	visudoCheckFn = func(string) error { return fmt.Errorf(">>> /etc/sudoers.d/60-sysh: syntax error") }
+
+	// a valid policy first
+	setStdin(goodPolicy)
+	if rc := cmdPolicy([]string{"install"}); rc != 0 {
+		t.Fatalf("initial install rc = %d", rc)
+	}
+
+	priv := `version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "nginx"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+`
+	setStdin(priv)
+	if rc := cmdPolicy([]string{"install"}); rc != 1 {
+		t.Fatalf("install rc = %d, want 1", rc)
+	}
+	// prior policy intact, no fragment
+	if readFile(t, policyPath) != goodPolicy {
+		t.Fatal("failed privileged install corrupted the previous policy")
+	}
+	if _, err := os.Stat(sudoersPath); !os.IsNotExist(err) {
+		t.Fatal("failed privileged install must not write the fragment")
+	}
+}
+
+func TestPolicyInstallRemovesStaleGrant(t *testing.T) {
+	newTestEnv(t)
+	lintFS.(*fakeFS).
+		addDir("/usr/bin", 0o755, 0).
+		addFile("/usr/bin/systemctl", 0o755, 0).
+		addFile("/usr/bin/uptime", 0o755, 0)
+	sudoAvailableFn = func() bool { return true }
+	visudoCheckFn = func(string) error { return nil }
+
+	priv := `version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "nginx"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 60
+`
+	setStdin(priv)
+	if rc := cmdPolicy([]string{"install"}); rc != 0 {
+		t.Fatalf("privileged install rc = %d", rc)
+	}
+	if _, err := os.Stat(sudoersPath); err != nil {
+		t.Fatal("fragment not written")
+	}
+
+	// reinstalling a policy without privileged rules must drop the grant
+	setStdin(goodPolicy)
+	if rc := cmdPolicy([]string{"install"}); rc != 0 {
+		t.Fatalf("plain install rc = %d", rc)
+	}
+	if _, err := os.Stat(sudoersPath); !os.IsNotExist(err) {
+		t.Fatal("stale sudoers grant not removed")
 	}
 }

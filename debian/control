@@ -11,4 +11,4 @@ Description: login shell for AI agents on servers
  semantics, no tokens, all enforcement and recording server-side.
 Depends: systemd
 Recommends: auditd
-Suggests: openssh-server
+Suggests: openssh-server, sudo

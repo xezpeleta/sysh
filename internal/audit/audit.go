@@ -43,6 +43,7 @@ type Event struct {
 	PolicySHA   string
 	Mode        string
 	Truncated   bool
+	Privileged  bool   // rule grants root exec via sudo (phase 1.5)
 	Phase       string // "pre" (fail-closed), "post", ""
 	Detail      string
 }
@@ -111,6 +112,9 @@ func (JournalSink) Emit(ev Event) error {
 	}
 	if ev.Truncated {
 		vars["TRUNCATED"] = "true"
+	}
+	if ev.Privileged {
+		vars["PRIV"] = "true"
 	}
 	if ev.Detail != "" {
 		vars["DETAIL"] = ev.Detail

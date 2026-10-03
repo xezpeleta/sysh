@@ -67,9 +67,9 @@ func (p Position) IsPattern() bool { return p.Re != nil }
 
 // PatInfo is the static analysis of a pattern position.
 type PatInfo struct {
-	First       runeSet  // possible first characters of any match
-	CanEmpty    bool     // can the pattern match the empty string?
-	HasAnyChar  bool     // contains unescaped '.' (over-broad match warning)
+	First      runeSet // possible first characters of any match
+	CanEmpty   bool    // can the pattern match the empty string?
+	HasAnyChar bool    // contains unescaped '.' (over-broad match warning)
 }
 
 // AnalyzePattern parses s as RE2 and computes its first-character set.

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,7 +187,7 @@ func TestRunPolicyFailClosed(t *testing.T) {
 	}
 }
 
-func TestRunPrivilegedRefused(t *testing.T) {
+func TestRunPrivilegedWithoutGrantFails(t *testing.T) {
 	doc := `
 version = 2
 mode = "enforcing"
@@ -195,20 +196,44 @@ mode = "enforcing"
 argv = ["/bin/echo", "danger"]
 path = "/bin/echo"
 privileged = true
+ack = true
+timeout = 10
 `
-	cfg, rec, _, stderr := testConfig(t, doc)
+	cfg, rec, _, _ := testConfig(t, doc)
 	code := Run(cfg, "/bin/echo danger")
-	if code != 126 {
-		t.Fatalf("exit code %d, want 126", code)
+	// On a host without the matching sudoers grant, sudo -n refuses:
+	// the argv gains nothing. (With a grant — the operator-installed
+	// case — the same path executes as root; verified live on the
+	// deployment host.)
+	if code == 0 {
+		t.Fatalf("privileged argv without a sudoers grant must not succeed (exit %d)", code)
 	}
-	if !strings.Contains(stderr.String(), `"class":"privileged_unavailable"`) {
-		t.Fatalf("stderr: %s", stderr.String())
-	}
-	// and no child may have run: no post-exec event
+	// The attempt is fully attributed: pre + post events, PRIV marked.
+	var sawPre, sawPost bool
 	for _, ev := range rec.Events {
-		if ev.Phase == "post" {
-			t.Fatalf("privileged argv executed: %+v", ev)
+		if ev.Privileged && ev.Phase == "pre" && ev.Decision == audit.DecisionAllow {
+			sawPre = true
 		}
+		if ev.Privileged && ev.Phase == "post" {
+			sawPost = true
+		}
+	}
+	if !sawPre || !sawPost {
+		t.Fatalf("privileged attribution incomplete (pre=%v post=%v): %+v", sawPre, sawPost, rec.Events)
+	}
+}
+
+func TestWrapSudo(t *testing.T) {
+	argv, path, err := wrapSudo([]string{"/usr/bin/systemctl", "restart", "nginx"}, "/usr/bin/systemctl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{SudoPath, "-n", "--", "/usr/bin/systemctl", "restart", "nginx"}
+	if fmt.Sprint(argv) != fmt.Sprint(want) {
+		t.Fatalf("wrapped argv = %v, want %v", argv, want)
+	}
+	if path != SudoPath {
+		t.Fatalf("wrapped path = %q", path)
 	}
 }
 

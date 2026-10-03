@@ -260,7 +260,7 @@ class, detail, request id where applicable, key id). This is the
 authoritative machine-readable contract. The process exit code is kept as
 human convenience only: child exit statuses pass through when a child ran;
 gateway refusals use a documented set (2 lockdown, 3 malformed argv, 30
-approval required, 125 denied, 126 privileged unavailable pre-phase-2) —
+approval required, 125 denied, 126 sysh-result/phase-2 only) —
 with the explicit caveat that these collide with child codes (`systemctl
 status` returns 3; `timeout` uses 124), which is exactly why automation
 must read the stderr line.

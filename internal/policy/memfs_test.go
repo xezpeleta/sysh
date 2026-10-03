@@ -25,8 +25,6 @@ func (m memFI) Sys() any {
 	return st
 }
 
-
-
 type memFS struct {
 	entries map[string]memFI
 }

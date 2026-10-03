@@ -30,14 +30,14 @@ func TestSplitCommand(t *testing.T) {
 
 func TestSplitCommandRejects(t *testing.T) {
 	bad := []string{
-		"",                        // empty
-		"echo \x00hidden",         // NUL byte
-		"echo café",               // UTF-8 multibyte
-		"echo \x1b[31mred\x1b[0m", // terminal escape
-		"echo \n",                 // newline
-		"echo \r",                 // CR
-		"echo \x7f",               // DEL
-		"echo €",                  // non-ASCII
+		"",                         // empty
+		"echo \x00hidden",          // NUL byte
+		"echo café",                // UTF-8 multibyte
+		"echo \x1b[31mred\x1b[0m",  // terminal escape
+		"echo \n",                  // newline
+		"echo \r",                  // CR
+		"echo \x7f",                // DEL
+		"echo €",                   // non-ASCII
 		strings.Repeat("a", 65537), // too long
 	}
 	for _, cmd := range bad {

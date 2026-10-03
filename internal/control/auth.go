@@ -13,10 +13,10 @@ import (
 
 // cmdAuth manages agent keys (§4.3, §5).
 //
-//   sysh auth add        — reads one authorized_keys line from stdin:
-//                           restrict [from="…"] <type> <base64> <comment= key id>
-//   sysh auth list       — keys.map + authorized_keys cross-check
-//   sysh auth remove <id>
+//	sysh auth add        — reads one authorized_keys line from stdin:
+//	                        restrict [from="…"] <type> <base64> <comment= key id>
+//	sysh auth list       — keys.map + authorized_keys cross-check
+//	sysh auth remove <id>
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: sysh auth add|list|remove <key-id>")

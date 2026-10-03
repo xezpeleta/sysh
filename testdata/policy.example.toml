@@ -82,10 +82,16 @@ deny = true
 argv = ["/usr/bin/systemctl", "--user"]
 deny = true                  # user-unit persistence
 
-# --- phase 2 preview: privileged rules never execute without a human
-# approving the exact argv; on a phase-1 build they are refused (126).
+# --- privileged rules (phase 1.5): execute as root via an exact-argv
+# sudoers grant that `sysh policy install` generates and validates with
+# visudo. Guardrails enforced by the linter: ack = true, an explicit
+# timeout, no rest, no whitespace inside argv elements (sudoers grants
+# match exact argv strings). Trade-off: while such a policy is
+# installed the gateway runs WITHOUT NoNewPrivs, so the linter also
+# rejects setuid binaries on non-privileged allow rules.
 # [[rule]]
 # argv = ["/usr/bin/systemctl", "restart", "nginx"]
 # path = "/usr/bin/systemctl"
 # privileged = true
+# ack = true
 # timeout = 30

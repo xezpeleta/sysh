@@ -13,9 +13,9 @@ package policy
 // require an explicit ack = true on the rule before install proceeds.
 
 type denyEntry struct {
-	names []string // glob patterns matched against basename and realpath
-	argv  []string // literals that must all appear in rule argv to trigger
-	warn  bool
+	names  []string // glob patterns matched against basename and realpath
+	argv   []string // literals that must all appear in rule argv to trigger
+	warn   bool
 	reason string
 }
 
@@ -46,7 +46,7 @@ var denylist = []denyEntry{
 	},
 	{
 		names:  []string{"systemctl"},
-		argv:  []string{"--user"},
+		argv:   []string{"--user"},
 		reason: "user-unit persistence",
 	},
 	// Warning class: file/network writers that are not executors.
