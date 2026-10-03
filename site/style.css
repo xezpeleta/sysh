@@ -150,6 +150,28 @@ strong { color: var(--text); font-weight: 600; }
 }
 .btn-ghost:hover { border-color: var(--secondary); background: var(--card); }
 
+/* ---------- demo intros ---------- */
+.demo-intro {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0 1.5rem 1.4rem;
+  text-align: center;
+  color: var(--secondary);
+  line-height: 1.65;
+}
+.demo-intro strong { color: var(--text); }
+.demo-intro code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--card);
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.demo-intro + .pi-replay, .demo-intro + .term-replay { margin-top: 0; }
+.pi-replay + .demo-intro, .term-replay figcaption + .demo-intro,
+.term-replay + .demo-intro { padding-top: 1.6rem; }
+
 /* ---------- session replay widget ---------- */
 .pi-replay {
   max-width: 880px;

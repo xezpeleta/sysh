@@ -1,0 +1,49 @@
+{
+ "title": "plain ssh \u2014 sy@web01.example.net",
+ "lines": [
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'",
+   "o": " 13:04:01 up 41 days,  1 user,  load average: 0.14, 0.18, 0.09",
+   "m": "ok"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl is-active apache2'",
+   "o": "active",
+   "m": "ok"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/tail -n 20 /var/log/apache2/error.log'",
+   "o": "[Fri Oct 02 21:14:03.442118 2026] [mpm_prefork:error] [pid 812]\nAH00161: server reached MaxRequestWorkers setting, consider raising\nthe MaxRequestWorkers setting",
+   "m": "ok"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'",
+   "o": "{\"sysh\":1,\"class\":\"denied\",\"detail\":\"no rule allows this argv\",\"exit\":125}",
+   "m": "deny"
+  },
+  {
+   "c": "cat security.conf.new | ssh -i agent.key sy@web01.example.net '/usr/bin/tee /etc/apache2/conf-available/security.conf'",
+   "o": "{\"sysh\":1,\"class\":\"exec\",\"PRIV\":true,\"exit\":0}",
+   "m": "priv"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/sbin/apache2ctl configtest'",
+   "o": "Syntax OK",
+   "m": "priv"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl reload apache2'",
+   "o": "{\"sysh\":1,\"class\":\"exec\",\"PRIV\":true,\"exit\":0}",
+   "m": "priv"
+  },
+  {
+   "n": "# on the server \u2014 the record this channel cannot forge or erase:"
+  },
+  {
+   "c": "journalctl -t sysh -o verbose | grep -E 'KEYID|ARGV|PRIV|DECISION'",
+   "o": "    KEYID=sy/web01.example.net\n    ARGV=[\"/usr/bin/systemctl\",\"restart\",\"mariadb\"]  DECISION=deny\n    ARGV=[\"/usr/bin/systemctl\",\"reload\",\"apache2\"]  PRIV=true",
+   "m": "c",
+   "l": "sudo's own PAM line too, independently"
+  }
+ ]
+}

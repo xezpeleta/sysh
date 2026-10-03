@@ -7,8 +7,10 @@
 <meta name="description" content="sysh makes the agent's SSH login the control point: privilege control and accountability for unattended AI agents on sysadmin tasks, enforced on the server itself.">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="pi-replay.css">
+<link rel="stylesheet" href="term-replay.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect x=%270.8%27 y=%270.6%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%237ec88c%27/><rect x=%278.4%27 y=%275%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%2396b6dd%27/><rect x=%271.6%27 y=%279.4%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%23f0cf8e%27/></svg>"><rect width='16' height='16' rx='3' fill='%23e6e4df'/><path d='M4 5l3.5 3L4 11' stroke='%235b8def' stroke-width='1.7' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M9 11h3.5' stroke='%235b8def' stroke-width='1.7' stroke-linecap='round'/></svg>">
 <script src="pi-replay.js" defer></script>
+<script src="term-replay.js" defer></script>
 </head>
 <body>
 
@@ -42,6 +44,16 @@
   </div>
 </header>
 
+<p class="demo-intro">
+  <strong>Watch an agent work alone.</strong> The session below is emulated,
+  but every mark in it is real sysh behavior. A coding agent gets a task —
+  <em>&ldquo;web01 is dropping requests under load&rdquo;</em> — and works on
+  the server over plain SSH as the unprivileged <code>sy</code> user. Its
+  reads go through, its one enumerated config write goes through as a
+  pre-authorized root verb — and when it tries to restart the database, a
+  service that is <em>not</em> in the policy, the server refuses before
+  anything runs. The agent never had the power to decide.
+</p>
 <figure class="pi-replay" data-pi-replay="replay.json">
   <pre class="pi-replay__fallback">prompt: web01 is dropping requests under load — check the server,
 raise the Apache worker ceiling if that's it, make it live.
@@ -66,6 +78,33 @@ answer: raised MaxRequestWorkers to 150 in the one Apache file the
 operator enumerated, validated, reloaded. The mariadb restart was refused
 (exit 125) — and that refusal is in journalctl -t sysh too.</pre>
   <figcaption>an emulated agent session — allowed where the policy allows, refused where it doesn't</figcaption>
+</figure>
+
+<p class="demo-intro">
+  <strong>No agent required.</strong> sysh is not a harness — it is a login
+  shell, so anything that speaks SSH gets the same treatment: your scripts,
+  your CI job, a junior admin on a laptop. Below, the same host driven by
+  nothing but <code>ssh</code> — same bounds, same refusals. The last
+  command is you, on the server, reading the record this channel cannot
+  touch.
+</p>
+<figure class="term-replay" data-term-replay="term-demo.json">
+  <pre class="term-replay__fallback">$ ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'
+  13:04:01 up 41 days,  1 user,  load average: 0.14, 0.18, 0.09   ✓ allowed
+
+$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'
+  {"sysh":1,"class":"denied","detail":"no rule allows this argv","exit":125}   ✗ denied by policy
+
+$ cat security.conf.new | ssh -i agent.key sy@web01.example.net \
+    '/usr/bin/tee /etc/apache2/conf-available/security.conf'
+  {"sysh":1,"class":"exec","PRIV":true,"exit":0}   ✓ pre-authorized root verb
+
+# on the server — the record this channel cannot forge or erase:
+$ journalctl -t sysh -o verbose | grep -E 'KEYID|ARGV|PRIV|DECISION'
+    KEYID=sy/web01.example.net
+    ARGV=["/usr/bin/systemctl","restart","mariadb"]  DECISION=deny
+    ARGV=["/usr/bin/systemctl","reload","apache2"]  PRIV=true</pre>
+  <figcaption>also emulated — plain ssh, no AI anywhere, same bounds and same record</figcaption>
 </figure>
 
 <main class="wrap">

@@ -1,0 +1,139 @@
+/*
+ * sysh site: styles for the plain-terminal replay widget
+ * (term-replay.js). Terminal chrome matches the site's old static
+ * term window: paper palette, hairline border, traffic dots.
+ */
+.term-replay {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.term-replay .term-window {
+  background: var(--term, #eceef2);
+  border: 1px solid var(--border, #d5d3ce);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.term-replay .term-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--border, #d5d3ce);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.term-replay .term-bar i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border, #d5d3ce);
+  display: inline-block;
+}
+.term-replay .term-bar i:nth-child(1) { background: #f07167; }
+.term-replay .term-bar i:nth-child(2) { background: #f2c94c; }
+.term-replay .term-bar i:nth-child(3) { background: #5c9fd6; }
+
+.term-replay .term-bar .term-title {
+  margin-left: 0.6rem;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--muted, #5c6670);
+  letter-spacing: 0.04em;
+}
+
+.term-replay .term-body {
+  padding: 1.1rem 1.3rem 1.3rem;
+  font-family: var(--mono, monospace);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text, #1f1f1f);
+  max-height: 26rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #8b9299 transparent;
+}
+
+.term-replay .tl {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term-replay .tl .p,
+.term-replay .tl.p {
+  color: var(--accent-deep, #3a6fd8);
+  font-weight: 700;
+}
+
+.term-replay .tl.c {
+  color: var(--muted, #5c6670);
+}
+
+.term-replay .tl.out {
+  color: var(--secondary, #5c6670);
+}
+
+.term-replay .mk {
+  margin-left: 1.4em;
+  font-weight: 700;
+}
+.term-replay .mk.ok { color: var(--green, #4a8f5c); }
+.term-replay .mk.no { color: var(--red, #f07167); }
+.term-replay .mk.c {
+  color: var(--muted, #5c6670);
+  font-weight: 400;
+}
+
+.term-replay .cur {
+  background: var(--text, #1f1f1f);
+  animation: term-replay-blink 1s steps(1, end) infinite;
+}
+
+@keyframes term-replay-blink {
+  50% { background: transparent; }
+}
+
+/* no-JS fallback: same chrome, static */
+.term-replay .term-replay__fallback {
+  margin: 0;
+  padding: 1.1rem 1.3rem 1.3rem;
+  background: var(--term, #eceef2);
+  border: 1px solid var(--border, #d5d3ce);
+  border-radius: 10px;
+  font-family: var(--mono, monospace);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text, #1f1f1f);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term-replay figcaption {
+  margin-top: 0.7rem;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #5c6670);
+}
+
+.term-replay .term-replay__button {
+  margin-inline-start: 1ch;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-deep, #3a6fd8);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media print, (prefers-reduced-motion: reduce) {
+  .term-replay .cur {
+    animation: none;
+  }
+}
