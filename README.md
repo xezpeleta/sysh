@@ -73,6 +73,40 @@ a shell.
   and passes an argv — scripts, CLI copilots, MCP bridges, humans.
 - **Not a replacement for human access.** Your SSH is untouched.
 
+## Two phases: attended setup, unattended operation
+
+`sysh` splits agent work on a server into two very different modes.
+
+**Attended preparation.** A human with root SSH — often working *with* a
+code agent at their side — prepares the host: install the deb, write the
+policy, create the file-access shape the policy assumes (groups, ACLs,
+ownership, traverse-only directories), deploy the agent key, and run
+`sysh doctor` until it is clean. In this phase the code agent is an
+assistant to the operator, not autonomous: every root action is
+supervised, interactive, and reversible (work on a VM you can snapshot —
+`sysh` itself has no rollback). A worked example — "read and modify the
+Wazuh agent config as an unprivileged user, restart as the single
+pre-authorized root verb" — is recorded in
+[`deployments/unifi/README.md`](deployments/unifi/README.md).
+
+**Unattended operation.** Once the host is prepared, the agent connects
+as `sy` over plain SSH and works alone inside the bounds the operator
+set: the exact-argv policy, the OS-level permissions beneath it,
+`no_new_privs`, per-exec scopes and caps, and journald/auditd recording.
+No human watches each command; the journal is the watch.
+
+The honest framing: **these bounds are not infallible, and do not need
+to be.** An allowed argv is still a real program with real behavior —
+`tee` writes whatever the agent pipes into the file it was granted, and
+a bug in an allowed binary is reachable. What exact-argv matching plus
+OS permissions buy you is *bounded, recorded, root-free-by-default*
+agent access — enough to make unattended AI-agent use on real servers
+defensible, where the alternatives are "give it a root shell" or "no
+agent at all". The record (sysh events, auditd, sudo's own journal
+line) is what lets you reconstruct afterwards what the agent actually
+did, and the phase-2 approval gate covers root work you did not
+pre-authorize.
+
 ## The whole lifecycle
 
 ```console
