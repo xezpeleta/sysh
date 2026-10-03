@@ -2,6 +2,7 @@ package control
 
 import (
 	"fmt"
+	"path/filepath"
 	"os"
 	"os/exec"
 	"os/user"
@@ -49,20 +50,24 @@ func cmdDoctor(args []string) int {
 		fail("sy home perms", "must be root-owned and not group/world-writable")
 	}
 
-	// --- supplementary groups (§4.2): the documented opt-in is
-	// systemd-journal with the flag file present; nothing else.
+	// --- supplementary groups (§4.2): `sy` holds no privilege-bearing
+	// groups. Documented opt-ins: systemd-journal (with its flag), and
+	// any group the operator declared in flags/allowed-groups — the
+	// mechanism for file-access groups backing policy profiles (e.g.
+	// rw on one config file). Anything else fails.
 	gids := groupIDs("sy")
 	journalOptIn := fileExists(flagsDir + "/journal-group")
+	declared := readAllowedGroups(filepath.Join(flagsDir, "allowed-groups"))
 	bad := []string{}
 	for _, g := range gids {
-		switch g {
-		case "sy":
-		case "systemd-journal":
-			if !journalOptIn {
-				bad = append(bad, g+" (no opt-in flag; run: sysh journal-group enable or remove the group)")
-			}
+		switch {
+		case g == "sy":
+		case g == "systemd-journal" && journalOptIn:
+		case containsGroup(declared, g):
+		case g == "systemd-journal":
+			bad = append(bad, g+" (no opt-in flag; run: sysh journal-group enable or remove the group)")
 		default:
-			bad = append(bad, g)
+			bad = append(bad, g+" (undeclared; add it to "+filepath.Join(flagsDir, "allowed-groups")+" if intentional)")
 		}
 	}
 	if len(bad) == 0 {
@@ -359,6 +364,33 @@ func userShell(name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("not found")
+}
+
+// readAllowedGroups parses the operator-declared group allowlist
+// (flags/allowed-groups, root-owned tree): one group name per line.
+// A missing file means no declarations.
+func readAllowedGroups(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func containsGroup(list []string, g string) bool {
+	for _, x := range list {
+		if x == g {
+			return true
+		}
+	}
+	return false
 }
 
 func groupIDs(name string) []string {

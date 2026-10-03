@@ -149,8 +149,11 @@ runs in a different trust domain (§10).
    → install UID-scoped rules (§8.4).
 5. debconf (default no): add `sy` to a **read-only journal group**
    (`systemd-journal` only — never `adm`, `docker`, `sudo`) so operators
-   can read `sysh` events without root. This is the single documented
-   exception to the no-supplementary-groups check; `doctor` knows it.
+   can read `sysh` events without root. The no-supplementary-groups
+   check in `doctor` knows two opt-ins: this one (flag-gated), and any
+   group the operator declares in `/etc/sysh/flags/allowed-groups` —
+   the mechanism for file-access groups that back policy profiles
+   (e.g. rw on a single config file, §6.8); undeclared groups fail.
 6. `purge` removes the user, `/etc/sysh`, the sshd drop-in, the auditd
    rules, and the tmpfiles.d entries. Audit history in the journal is
    intentionally kept. The spool, being volatile, disappears with the

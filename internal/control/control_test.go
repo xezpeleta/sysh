@@ -675,3 +675,21 @@ timeout = 60
 		t.Fatal("stale sudoers grant not removed")
 	}
 }
+
+func TestReadAllowedGroups(t *testing.T) {
+	newTestEnv(t)
+	path := filepath.Join(flagsDir, "allowed-groups")
+	if got := readAllowedGroups(path); got != nil {
+		t.Fatalf("missing file must yield nil, got %v", got)
+	}
+	if err := os.MkdirAll(flagsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# comment\n\nsysh-wazuh-cfg\n  sysh-other  \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := readAllowedGroups(path)
+	if len(got) != 2 || got[0] != "sysh-wazuh-cfg" || got[1] != "sysh-other" {
+		t.Fatalf("parsed groups = %v", got)
+	}
+}
