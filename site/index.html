@@ -6,83 +6,99 @@
 <title>sysh — a login shell for unattended AI agents on servers</title>
 <meta name="description" content="sysh makes the agent's SSH login the control point: privilege control and accountability for unattended AI agents on sysadmin tasks, enforced on the server itself.">
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%230d1117'/><path d='M3 5l3 3-3 3' stroke='%2338d15a' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M8.5 11h4.5' stroke='%2338d15a' stroke-width='1.6' stroke-linecap='round'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23e6e4df'/><path d='M4 5l3.5 3L4 11' stroke='%235b8def' stroke-width='1.7' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M9 11h3.5' stroke='%235b8def' stroke-width='1.7' stroke-linecap='round'/></svg>">
 </head>
 <body>
 
+<div class="announce">
+  <span class="dot">●</span> Phase 1 shipped — v0.1.0, first fleet deployment verified end-to-end.
+  <a href="https://github.com/xezpeleta/sysh/releases/tag/v0.1.0">see the release ↗</a>
+</div>
+
 <nav class="nav">
-  <a class="brand" href="/sysh/"><span class="prompt">$</span> sysh</a>
+  <a class="brand" href="/sysh/"><span class="mark">❯</span>sysh</a>
   <div class="nav-links">
-    <a href="/sysh/">What it is</a>
+    <a href="/sysh/" class="active">What it is</a>
     <a href="/sysh/usage.html">Usage</a>
     <a href="https://github.com/xezpeleta/sysh">GitHub</a>
   </div>
 </nav>
 
 <header class="hero">
-  <h1>A login shell for unattended AI agents on servers.</h1>
-  <p class="tagline">Privilege control and accountability — enforced on the server itself.</p>
+  <h1>The agent gets the server.<br>You get the <span class="acc">record</span>.</h1>
+  <p class="tagline">a login shell for unattended AI agents on servers</p>
   <p class="lead">
-    It exists for sysadmin work you let an agent do <em>alone</em>: sysh bounds
-    what the agent may do, and records what it actually did. It does not promise
-    perfect bounds — an allowed command is still a real command — it promises
-    bounds <strong>you set</strong>, and a record you can reconstruct the
-    session from.
+    It exists for sysadmin work you let an agent do <strong>alone</strong>: sysh
+    bounds what the agent may do, and records what it actually did. It does not
+    promise perfect bounds — an allowed command is still a real command — it
+    promises bounds <strong>you set</strong>, and a record you can reconstruct
+    the session from.
   </p>
   <div class="hero-ctas">
     <a class="btn" href="/sysh/usage.html">Get started</a>
-    <a class="btn btn-ghost" href="https://github.com/xezpeleta/sysh/releases">Download the .deb</a>
+    <a class="btn btn-ghost" href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">Read the spec</a>
   </div>
 </header>
 
-<section id="problem">
-  <h2>The problem it solves</h2>
-  <p>
-    When you let an AI agent operate a server, the options are all-or-nothing:
-    give it a root key (it can do anything, silently), or a normal user (it can
-    do little, still silently). Even on a disposable host, the question
-    afterwards is always the same: <em>“it works, but what else did it do?
-    Which files did it change? Which hosts did it touch?”</em>
-  </p>
-</section>
+<div class="term">
+  <div class="term-window">
+    <div class="term-bar"><i></i><i></i><i></i><span class="term-title">agent session — web01.example.net</span></div>
+    <pre class="term-body"><span class="p">$</span> ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'
+<span class="out"> 13:04:01 up 41 days,  1 user,  load average: 0.14, 0.18, 0.09</span>   <span class="ok">✓ allowed</span>
+
+<span class="p">$</span> ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart wazuh-agent'
+<span class="out">{"sysh":1,"class":"exec","rule":13,"PRIV":true,"exit":0}</span>   <span class="ok">✓ pre-authorized root verb</span>
+
+<span class="p">$</span> ssh -i agent.key sy@web01.example.net '/usr/bin/sudo -n id'
+<span class="no">{"sysh":1,"class":"denied","detail":"denied by deny rule","exit":125}</span>   <span class="no">✗ denied by policy</span>
+
+<span class="c"># on the server — the record the agent cannot forge or erase:</span>
+<span class="p">$</span> journalctl -t sysh -o verbose | grep -E 'KEYID|PRIV|ARGV'
+<span class="out">    KEYID=sy/web01.example.net
+    ARGV=["/usr/bin/systemctl","restart","wazuh-agent"]
+    PRIV=true</span>   <span class="c">+ sudo's own PAM line, independently</span></pre>
+  </div>
+  <p class="term-caption">every exec attempt — allowed or denied — lands in journald and auditd</p>
+</div>
+
+<main class="wrap">
 
 <section id="how">
-  <h2>How it works</h2>
-  <p>
-    sysh makes the agent's SSH login itself the control point. The agent logs
-    in over plain SSH as an unprivileged system user whose <strong>login
-    shell</strong> does three things, on the server, before any command runs:
+  <p class="kicker">How it works</p>
+  <h2>The login shell is the control point</h2>
+  <p class="section-lead">
+    The agent logs in over plain SSH as an unprivileged system user whose
+    login shell does three things — on the server, before any command runs.
+    Control lives there: not in the agent's harness, not in prompt
+    instructions, not in a management plane. The agent cannot talk its way
+    past a shell.
   </p>
   <div class="cards">
     <div class="card">
       <h3>Records everything</h3>
       <p>Every command attempt — allowed or denied — with the full argv, the
-      invoking key, and the outcome, to journald and (opt-in) auditd. The agent
-      cannot forge or erase the record.</p>
+      invoking key, and the outcome, to journald and (opt-in) auditd. The
+      agent cannot forge or erase the record.</p>
     </div>
     <div class="card">
       <h3>Delimits what runs</h3>
       <p>A root-owned policy of exact commands: literal argv matching, no
-      shell semantics, anchored patterns only, fixed absolute paths, a
-      mandatory linter that rejects escape hatches (shells, <code>find</code>,
-      <code>xargs</code>, <code>git</code>, <code>docker</code>…).</p>
+      shell semantics, anchored patterns only, a mandatory linter that
+      rejects escape hatches — shells, <code>find</code>, <code>xargs</code>,
+      <code>git</code>, <code>docker</code>…</p>
     </div>
     <div class="card">
       <h3>Refuses to elevate</h3>
-      <p>Every process runs under <code>PR_SET_NO_NEW_PRIVS</code>: setuid and
-      sudo are kernel-disabled for the whole agent tree. Root work happens
-      only through operator-written <em>privileged rules</em> — exact-argv sudo
-      grants generated and validated at policy install.</p>
+      <p>Every process runs under <code>no_new_privs</code>: setuid and sudo
+      are kernel-disabled for the whole agent tree. Root work happens only
+      through operator-written <em>privileged rules</em> — exact-argv sudo
+      grants, validated at install.</p>
     </div>
   </div>
-  <p class="center-note">
-    Control lives <strong>on the server</strong>. Not in the agent's harness,
-    not in prompt instructions, not in a management plane. The agent cannot
-    talk its way past a shell.
-  </p>
 </section>
 
 <section id="phases">
+  <p class="kicker">The workflow</p>
   <h2>Two phases: attended setup, unattended operation</h2>
   <div class="phases">
     <div class="phase">
@@ -90,9 +106,9 @@
       <h3>Attended preparation</h3>
       <p>A human with root SSH — often working <em>with</em> a code agent at
       their side — prepares the host: install the package, write the policy,
-      create the file-access shape the policy assumes (groups, ACLs,
-      ownership), deploy the agent key, run <code>sysh doctor</code> until it
-      is clean. The agent here is an assistant, not autonomous: supervised,
+      create the file-access shape it assumes (groups, ACLs, ownership),
+      deploy the agent key, run <code>sysh doctor</code> until it is clean.</p>
+      <p>The agent here is an assistant, not autonomous: supervised,
       interactive, reversible.</p>
     </div>
     <div class="phase">
@@ -101,78 +117,102 @@
       <p>The agent connects as <code>sy</code> over plain SSH and works alone
       inside the bounds the operator set: the exact-argv policy, the OS-level
       permissions beneath it, no-new-privs, per-exec scopes and resource
-      caps, and full journald/auditd recording.</p>
-      <p class="phase-punch">No human watches each command. The journal is
-      the watch.</p>
+      caps, full journald/auditd recording.</p>
+      <p class="phase-punch">No human watches each command. The journal is the watch.</p>
     </div>
   </div>
 </section>
 
-<section id="example">
-  <h2>What the agent sees, what you see</h2>
-  <div class="code-grid">
-    <div>
-      <p class="code-label">The agent runs:</p>
-<pre><code>ssh -i agent.key sy@server '/usr/bin/uptime'
-
-# a root verb the operator pre-authorized:
-ssh -i agent.key sy@server \
-  '/usr/bin/systemctl restart wazuh-agent'
-
-# anything else — including sudo itself:
-ssh -i agent.key sy@server '/usr/bin/sudo -n id'
-→ exit 125, class=denied</code></pre>
-    </div>
-    <div>
-      <p class="code-label">You read, on the server:</p>
-<pre><code>journalctl -t sysh -n 2 -o verbose
-  DECISION=allow
-  KEYID=sy/web01.example.net
-  ARGV=["/usr/bin/systemctl","restart","wazuh-agent"]
-  PRIV=true
-
-# independent second record, from sudo itself:
-pam_unix(sudo:session): session opened for user
-root(uid=0) by (uid=999)</code></pre>
-    </div>
-  </div>
-</section>
-
-<section id="honest">
-  <h2>Honest limits</h2>
-  <p>
-    These bounds are not infallible, and do not need to be. An allowed argv is
-    still a real program with real behavior — <code>tee</code> writes whatever
-    the agent pipes into the file it was granted. What exact-argv matching
-    plus OS permissions buy you is <em>bounded, recorded,
-    root-free-by-default</em> agent access — enough to make unattended
-    AI-agent use on real servers defensible, where the alternatives are
-    “give it a root shell” or “no agent at all”. The threat model, adversary
-    classes and named residuals are written out in
+<section id="nots">
+  <p class="kicker">Honest limits</p>
+  <h2>What sysh is not</h2>
+  <p class="section-lead">
+    These bounds are not infallible, and do not need to be. An allowed argv
+    is still a real program with real behavior — <code>tee</code> writes
+    whatever the agent pipes into the file it was granted. What you get is
+    <strong>bounded, recorded, root-free-by-default</strong> agent access —
+    defensible, where the alternatives are “give it a root shell” or “no
+    agent at all”. The full threat model is written out in
     <a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">PROJECT.md</a>.
   </p>
+  <div class="nots">
+    <div class="not">
+      <h3>Not a sandbox</h3>
+      <p>The agent operates the real host, as a real unprivileged user. If
+      you need isolation, run sysh inside whatever isolation you already
+      have.</p>
+    </div>
+    <div class="not">
+      <h3>Not root-without-approval</h3>
+      <p>For unrestricted root agents, sysh is not that. Closest: permissive
+      mode on a host you consider disposable — sysh has no snapshot or
+      rollback integration.</p>
+    </div>
+    <div class="not">
+      <h3>Not monitoring</h3>
+      <p>It audits its own channel into kernel-attested sinks. Shipping and
+      correlating events is your existing stack's job — rsyslog, Wazuh,
+      journal forwarding.</p>
+    </div>
+    <div class="not">
+      <h3>Not a harness</h3>
+      <p>Works with any client that speaks SSH and passes an argv — scripts,
+      CLI copilots, MCP bridges, humans. Your own SSH stays untouched.</p>
+    </div>
+  </div>
 </section>
 
 <section id="stack">
+  <p class="kicker">Under the hood</p>
   <h2>It fits your stack</h2>
   <ul class="plain">
-    <li><strong>One static Go binary</strong>, one .deb, no daemon, no
-    management plane, no orchestrator — everything host-local.</li>
-    <li><strong>Any client</strong>: scripts, CLI copilots, MCP bridges,
-    humans — if it speaks SSH and passes an argv, it works.</li>
-    <li><strong>Your existing logs</strong>: events flow to journald, rsyslog
-    or Wazuh for fleet correlation; your SSH for humans is untouched.</li>
-    <li><strong>Debian/Ubuntu</strong> today (deb package; systemd scopes,
-    journald and auditd integration).</li>
+    <li><strong>One static Go binary</strong> — one .deb, no daemon, no
+    management plane, no orchestrator; everything host-local.</li>
+    <li><strong>argv is the unit of trust</strong> — printable-ASCII split,
+    exact-length matching, deny rules with prefix semantics; per-exec
+    systemd scopes with resource caps and output limits.</li>
+    <li><strong>Fine-grained profiles by composition</strong> — the argv
+    policy plus ordinary OS permissions (groups, ACLs, ownership) shapes
+    access like <em>“modify the Wazuh config as a user, restart as the one
+    root verb”</em>.</li>
+    <li><strong>Debian / Ubuntu</strong> today; designed for the KVM-era
+    fleet where journald and auditd are already there.</li>
   </ul>
 </section>
 
+<section id="involve">
+  <p class="kicker">Go deeper</p>
+  <h2>Get involved with sysh</h2>
+  <div class="involve">
+    <div class="card">
+      <h3>Specification</h3>
+      <p>Threat model, gateway internals, privileged execution, two external
+      security-review rounds with dispositions.</p>
+      <a class="learn" href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">read project.md ↗</a>
+    </div>
+    <div class="card">
+      <h3>Deployment records</h3>
+      <p>Per-host runbooks from the pilot fleet — including the worked
+      wazuh-config profile, verified end-to-end.</p>
+      <a class="learn" href="https://github.com/xezpeleta/sysh/tree/main/deployments">browse deployments ↗</a>
+    </div>
+    <div class="card">
+      <h3>Source &amp; releases</h3>
+      <p>MIT-licensed Go, one binary, buildable anywhere. Release .deb
+      attached to every tag.</p>
+      <a class="learn" href="https://github.com/xezpeleta/sysh">github.com/xezpeleta/sysh ↗</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
 <footer class="footer">
-  <p><a href="https://github.com/xezpeleta/sysh">xezpeleta/sysh</a> ·
-  spec &amp; review dispositions in
+  <span class="fin">bounds you set, and a record you can trust.</span>
+  <a href="https://github.com/xezpeleta/sysh">xezpeleta/sysh</a> ·
+  <a href="https://github.com/xezpeleta/sysh/blob/main/README.md">README</a> ·
   <a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">PROJECT.md</a> ·
-  worked deployment example in
-  <a href="https://github.com/xezpeleta/sysh/tree/main/deployments">deployments/</a></p>
+  <a href="https://github.com/xezpeleta/sysh/releases">releases</a>
 </footer>
 
 </body>
