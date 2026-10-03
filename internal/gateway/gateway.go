@@ -218,6 +218,11 @@ func Run(cfg Config, cmd string) int {
 // SudoPath is where the wrapper expects sudo (Debian/Ubuntu layout).
 const SudoPath = "/usr/bin/sudo"
 
+// privilegedKillGrace is how long the gateway waits, after a privileged
+// child's timeout expires, for sudo's own per-command TIMEOUT to reap
+// the root child before the gateway kills the scope itself.
+const privilegedKillGrace = 5 * time.Second
+
 // wrapSudo rewrites an allowed privileged argv to run through sudo
 // with an exact grant: [sudo, -n, --, binary, args...]. The original
 // argv stays in the audit trail; only the exec changes.
@@ -368,8 +373,24 @@ func execChild(cfg Config, emit func(audit.Event) error, ident Identity, argv []
 		return code
 
 	case <-timeout:
-		killChild(cmd, unit, useScope)
-		<-done
+		if base.Privileged {
+			// The sudoers grant carries TIMEOUT=<rule timeout>, so
+			// sudo's own alarm fires now too — and sudo, running as
+			// root, can kill its child, which the user manager (uid
+			// sy) cannot. Give sudo a grace period to reap the child
+			// before the gateway kills anything: killing sudo first
+			// would orphan the root process (reaped only when the
+			// user manager stops after the last agent session).
+			select {
+			case <-done:
+			case <-time.After(privilegedKillGrace):
+				killChild(cmd, unit, useScope)
+				<-done
+			}
+		} else {
+			killChild(cmd, unit, useScope)
+			<-done
+		}
 		ev := withDec(base, audit.DecisionTimeout)
 		ev.Phase = "post"
 		ev.Exit = result.ExitTimeout

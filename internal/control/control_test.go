@@ -46,10 +46,11 @@ func newTestEnv(t *testing.T) string {
 		lintFS                                                                policy.FS
 		auditRulesActiveFn                                                    func() bool
 		sudoAvailableFn                                                       func() bool
+		sudoTimeoutTagFn                                                      func() bool
 		visudoCheckFn                                                         func(string) error
 		addGroupFn, delGroupFn                                                func(string, string) error
 	}{etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath, sudoersPath,
-		ownerUID, stdin, lintFS, auditRulesActiveFn, sudoAvailableFn, visudoCheckFn, addGroupFn, delGroupFn}
+		ownerUID, stdin, lintFS, auditRulesActiveFn, sudoAvailableFn, sudoTimeoutTagFn, visudoCheckFn, addGroupFn, delGroupFn}
 
 	t.Cleanup(func() {
 		etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath =
@@ -60,6 +61,7 @@ func newTestEnv(t *testing.T) string {
 		lintFS = saved.lintFS
 		auditRulesActiveFn = saved.auditRulesActiveFn
 		sudoAvailableFn = saved.sudoAvailableFn
+		sudoTimeoutTagFn = saved.sudoTimeoutTagFn
 		visudoCheckFn = saved.visudoCheckFn
 		addGroupFn, delGroupFn = saved.addGroupFn, saved.delGroupFn
 		os.RemoveAll(base)
@@ -77,6 +79,7 @@ func newTestEnv(t *testing.T) string {
 	lintFS = newFakeFS()
 	auditRulesActiveFn = func() bool { return false }
 	sudoAvailableFn = func() bool { return false }
+	sudoTimeoutTagFn = func() bool { return true }
 	visudoCheckFn = func(string) error { return nil }
 	addGroupFn = func(string, string) error { return nil }
 	delGroupFn = func(string, string) error { return nil }
@@ -533,8 +536,9 @@ func TestPolicyInstallPrivilegedGrant(t *testing.T) {
 		addDir("/usr/bin", 0o755, 0).
 		addFile("/usr/bin/systemctl", 0o755, 0)
 	sudoAvailableFn = func() bool { return true }
+	sudoTimeoutTagFn = func() bool { return true }
 	visudoCheckFn = func(content string) error {
-		if !strings.Contains(content, "NOPASSWD: /usr/bin/systemctl restart nginx") {
+		if !strings.Contains(content, "TIMEOUT=60 NOPASSWD: /usr/bin/systemctl restart nginx") {
 			return fmt.Errorf("grant missing from fragment:\n%s", content)
 		}
 		return nil
@@ -555,7 +559,7 @@ timeout = 60
 		t.Fatalf("install rc = %d, want 0", rc)
 	}
 	got := readFile(t, sudoersPath)
-	if !strings.Contains(got, "sy ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx") {
+	if !strings.Contains(got, "sy ALL=(root) TIMEOUT=60 NOPASSWD: /usr/bin/systemctl restart nginx") {
 		t.Fatalf("fragment grant wrong:\n%s", got)
 	}
 	if !strings.Contains(got, "!setenv") {
@@ -653,6 +657,7 @@ privileged = true
 ack = true
 timeout = 60
 `
+	sudoTimeoutTagFn = func() bool { return true }
 	setStdin(priv)
 	if rc := cmdPolicy([]string{"install"}); rc != 0 {
 		t.Fatalf("privileged install rc = %d", rc)

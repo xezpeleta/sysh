@@ -86,6 +86,10 @@ func cmdPolicy(args []string) int {
 			fmt.Fprintln(os.Stderr, "sysh policy install: privileged rules require sudo (apt install sudo) or removing the privileged rules")
 			return 1
 		}
+		if !sudoTimeoutTagFn() {
+			fmt.Fprintln(os.Stderr, "sysh policy install: privileged rules require sudo >= 1.9.13 (per-command TIMEOUT; this host's sudo is older) — remove the privileged rules or upgrade sudo")
+			return 1
+		}
 		if err := visudoCheckFn(sudoers); err != nil {
 			fmt.Fprintf(os.Stderr, "sysh policy install: sudoers fragment rejected by visudo: %v\n", err)
 			return 1
@@ -135,7 +139,12 @@ func buildSudoers(p *policy.Policy) (string, bool) {
 		r := &p.Rules[i]
 		if r.Privileged && !r.Deny {
 			hasPriv = true
-			fmt.Fprintf(&b, "sy ALL=(root) NOPASSWD: %s\n", strings.Join(r.Argv, " "))
+			// TIMEOUT (Option_Spec, sudo >= 1.9.13) makes sudo kill
+			// its own root child on expiry — the user manager cannot
+			// signal root processes, so sudo is the only reliable
+			// in-process enforcer. The gateway's timeout remains as
+			// the outer backstop for sudo itself.
+			fmt.Fprintf(&b, "sy ALL=(root) TIMEOUT=%d NOPASSWD: %s\n", r.Timeout, strings.Join(r.Argv, " "))
 		}
 	}
 	if !hasPriv {
@@ -163,6 +172,36 @@ func countPrivileged(p *policy.Policy) int {
 func sudoAvailable() bool {
 	_, err := exec.LookPath("sudo")
 	return err == nil
+}
+
+// sudoTimeoutTag reports whether the installed sudo supports the
+// per-command TIMEOUT= option (1.9.13+). The sudoers fragment depends
+// on it to enforce privileged timeouts: the user manager cannot signal
+// root processes, so sudo must kill its own child.
+func sudoTimeoutTag() bool {
+	out, err := exec.Command("sudo", "--version").Output()
+	if err != nil {
+		if out, err = exec.Command("/usr/bin/sudo", "--version").Output(); err != nil {
+			return false
+		}
+	}
+	// The version line is localized ("Sudo version x" / "x sudo
+	// bertsioa") — find the first version-shaped field instead of
+	// trusting a fixed index.
+	var major, minor, patch int
+	found := false
+	for _, f := range strings.Fields(string(out)) {
+		if len(f) > 0 && f[0] >= '0' && f[0] <= '9' {
+			if _, err := fmt.Sscanf(f, "%d.%d.%d", &major, &minor, &patch); err == nil {
+				found = true
+			}
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	return major > 1 || (major == 1 && (minor > 9 || (minor == 9 && patch >= 13)))
 }
 
 // visudoCheck validates a sudoers fragment with visudo -cf.
@@ -228,5 +267,6 @@ var (
 	lintFS             policy.FS = policy.RealFS()
 	auditRulesActiveFn           = auditRulesActive
 	sudoAvailableFn              = sudoAvailable
+	sudoTimeoutTagFn             = sudoTimeoutTag
 	visudoCheckFn                = visudoCheck
 )
