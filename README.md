@@ -1,110 +1,149 @@
 # sysh
 
-**A login shell for AI agents on servers.**
+**A login shell for AI agents on servers — with a record you can trust.**
 
-When you let an AI agent operate a server, you have two bad options today:
-give it a root key (it can do anything, silently), or a normal user (it can do
-nothing useful, still silently). `sysh` is the third option: the agent logs in
-over plain SSH as an unprivileged system user whose *login shell* enforces an
-allow-list of exact commands, records everything to an append-only audit log,
-and — when a command genuinely needs root — stops and waits for a human to
-approve a single, one-shot, expiring grant.
+When you let an AI agent operate a server, the options are all-or-nothing:
+give it a root key (it can do anything, silently), or a normal user (it can
+do little, still silently). And even when you *do* let an agent run nearly
+unbounded — snapshot-protected, disposable — the question afterwards is
+always the same: *"it works, but what else did it do? which files did it
+change? which other hosts did it touch?"*
 
-Control lives **on the server**, not in the agent's harness, not in a
-management plane, not in prompt instructions. The agent cannot talk its way
-past a shell.
+`sysh` makes the agent's SSH login itself the control point. The agent logs
+in over plain SSH as an unprivileged system user whose **login shell**:
+
+- **records everything** — every command attempt, allowed or denied, with
+  the full argv, the invoking key, and the outcome — to kernel-attested
+  logs (journald, auditd) the agent cannot forge or erase;
+- **can delimit** — enforce a strict allow-list of exact commands, matched
+  on the literal argv with no shell semantics behind it;
+- **cannot elevate, ever** — every process it spawns runs under
+  `PR_SET_NO_NEW_PRIVS`: setuid and sudo are kernel-disabled for the entire
+  agent tree, whatever else lives on the host;
+- **waits for humans on root work** — when a command genuinely needs root,
+  the agent records a request and stops; a human reviews it *on the server*
+  and the human's tool — not the agent — executes it (phase 2).
+
+Control lives **on the server**. Not in the agent's harness, not in prompt
+instructions, not in a management plane. The agent cannot talk its way past
+a shell.
 
 ## What it does
 
-- **Privilege delimiting** — the agent may run exactly what the policy allows,
-  as an unprivileged user. Policy is a signed TOML file; matching is on the
-  literal argv, not on shell syntax (there is no shell).
-- **Accountability** — every exec attempt (allowed or denied) is appended to a
-  tamper-evident audit log, stamped with the invoking key and UID. Privileged
-  runs get a corroborating root-side entry.
-- **Ephemeral credentials** — privileged commands require a *grant token*:
-  single-use, bound to the exact argv, expiring in ~2 minutes, minted only by
-  a human typing an interactive confirmation on the server.
-- **Human-gated elevation** — no standing sudo for the agent. One sudoers line
-  invokes a verifier that only runs an argv whose token a human signed off on.
+- **Observability first.** One structured event per exec attempt; opt-in
+  auditd rules scoped to the agent UID give kernel-level answers to "which
+  files were created/modified, which hosts were contacted". Events flow to
+  your existing log stack (rsyslog, Wazuh, journal forwarding) for fleet
+  correlation.
+- **Privilege delimiting.** Policy is a root-owned TOML file: exact argv
+  matching with anchored patterns, fixed absolute paths, scrubbed
+  environment, per-exec systemd scopes with resource caps. A mandatory
+  linter rejects over-broad patterns and known escape-hatch binaries
+  (shells, `find`, `xargs`, `tar`, `git`, `ssh`, `docker`, …).
+- **Zero elevation surface.** The base install has no sudoers line, no
+  setuid helper, no daemon, no tokens — nothing that can raise privileges.
+  `no_new_privs` makes that a kernel property for the whole agent process
+  tree.
+- **Human-gated root work (phase 2).** Approval happens interactively on
+  the server: the human sees the host-recorded argv, re-checks it against
+  policy, types a confirmation code bound to the *entire* argv, and the
+  approve command itself executes it. There is no bearer token to steal,
+  replay, or leak.
+- **A permissive mode** for snapshot-protected experimentation: the agent
+  runs anything it likes — as the unprivileged user, NNP-bit set, every
+  argv journaled. Unlimited for the agent, fully recorded for you. Never
+  root.
 
 ## What it is not
 
-- **Not a sandbox.** The agent operates the real host, as a real (unprivileged)
-  user, with the real tools. No jails, containers, or microVMs.
-- **Not monitoring.** It audits its own gated channel. Fleet observability
-  belongs to your existing stack.
-- **Not an agent or a harness.** It works with any client that speaks SSH and
-  can pass an argv — curl-driving scripts, CLI copilots, MCP servers, humans.
-- **Not a replacement for human access.** Your own SSH is untouched.
+- **Not a sandbox.** The agent operates the real host, as a real
+  (unprivileged) user, with the real tools. If you need isolation, run
+  `sysh` inside whatever isolation you already have.
+- **Not root-without-approval.** If you want an unrestricted root agent,
+  `sysh` is not that. The closest it offers is permissive mode plus your
+  snapshots.
+- **Not monitoring.** It audits its own channel with kernel-attested
+  sinks; shipping and correlating events is your existing stack's job.
+- **Not an agent or a harness.** It works with any client that speaks SSH
+  and passes an argv — scripts, CLI copilots, MCP bridges, humans.
+- **Not a replacement for human access.** Your SSH is untouched.
 
 ## The whole lifecycle
 
 ```console
 # sysadmin, on the server (everything local is done by the package):
-root@server:~# apt install sysh            # creates the 'sy' user, host keypair,
-                                           # /etc/sysh, audit log, sshd hardening
-                                           # (privileged tier is a debconf question)
+root@server:~# apt install sysh            # creates the 'sy' user, dirs,
+                                           # sshd Match block (validated,
+                                           # rolled back on error), optional
+                                           # auditd rules
 
 # operator, from their laptop, over plain SSH:
-$ sy keygen server.example                 # or plain ssh-keygen; prints the line below
-$ ssh root@server.example 'sysh auth add' <<<'restrict ssh-ed25519 AAAA… sy@laptop'
-$ ssh root@server.example 'sysh policy install' < server.toml
+$ ssh-keygen -t ed25519 -f ~/.config/sysh/keys/server.example -C sysh-agent/server.example
+$ ssh root@server.example 'sysh auth add' <<< 'restrict ssh-ed25519 AAAA… sysh-agent/server.example'
+$ ssh root@server.example 'sysh policy install' < server.example.toml
 
 # anyone the policy allows (human or agent):
 $ ssh -i ~/.config/sysh/keys/server.example sy@server.example 'uptime'
-[audit] sy allowed exec argv=["uptime"] via key sy@laptop
 
-# a privileged command:
+# the record:
+root@server:~# sysh audit tail
+{"key":"sysh-agent/server.example","argv":["uptime"],"decision":"allowed",…}
+root@server:~# journalctl -t sysh --since -1h        # kernel-attested
+root@server:~# ausearch -k sysh --start today        # files touched, hosts contacted
+
+# a command that needs root (phase 2 design):
 $ ssh -i … sy@server.example 'systemctl restart nginx'
-approval_required: req_a1b2c3 (report this id; a human must approve)
-$ echo $?                                 # → 30
-
-# the human, interactively, on the server:
-root@server:~# sysh approvals
-req_a1b2c3  argv=["systemctl","restart","nginx"]  age=12s
+approval_required: req_a1b2c3 (report this id; a human must approve it)
 root@server:~# sysh approve req_a1b2c3
-type to confirm: systemctl                  # the binary name, from a TTY
-token: gt_…                                 # bound to that exact argv, TTL 120s
-
-# the agent retries with the token:
-$ ssh -i … sy@server.example 'sysh-token gt_… -- systemctl restart nginx'
-[audit] root exec argv=["systemctl","restart","nginx"] token=req_a1b2c3 approver=root
+argv=["systemctl","restart","nginx"]   path=/usr/bin/systemctl
+confirm (8 chars): 3f9a2c1e_            # bound to the full argv
+[runs as root, in its own systemd unit, result journaled root-side]
+$ ssh -i … sy@server.example 'sysh-result req_a1b2c3'
 ```
 
-Every control operation above is a plain SSH command. There is no daemon, no
-API, no management plane to defend, no agent-side anything.
+Every control operation above is a plain SSH command. There is no daemon,
+no API, no management plane to defend, no agent-side anything. One static
+binary on the server; the only thing on your laptop is your own ssh (plus,
+optionally, a small MCP bridge for agent harnesses, distributed separately).
 
 ## Design principles
 
-1. **The server is the enforcement point.** Clients are untrusted transport.
+1. **The server is the enforcement and recording point.** Clients are
+   untrusted transport.
 2. **argv is the unit of trust.** No shell, no pipes, no `bash -c`, no
-   heredocs through the gateway. Compound operations get their own allow-listed
-   command, not a shell.
-3. **No standing privilege.** Elevation exists only inside a verified,
-   one-shot, argv-bound token execution.
-4. **Zero elevation surface by default.** The base install contains no sudoers
-   line, no setuid binary, nothing that can raise privileges. The privileged
-   tier is a deliberate opt-in.
-5. **Approvals are human and local.** Minting a token requires an interactive
-   TTY on the server, a typed confirmation of the binary name, and reading the
-   host-recorded (not agent-claimed) argv.
-6. **Audit before everything.** Denials are logged as faithfully as successes.
+   heredocs through the gateway — and argv is printable ASCII only.
+3. **No process in the agent tree can gain privileges** — kernel-enforced
+   (`no_new_privs`), not configuration-promised.
+4. **Approval chooses when; policy chooses what.** Elevation happens only
+   inside a root process a human is interactively driving, and never for
+   anything the policy forbids.
+5. **The agent cannot forge its own record.** Its events carry
+   kernel-attested identity (`_UID`, `_PID`, `_EXE`); root-side events live
+   where it cannot write.
+6. **Audit before everything, fail closed.** If the record cannot be
+   written, the command does not run.
+7. **`sysh` weakens nothing on the host.** One system user, one scoped
+  sshd `Match` block, optional auditd rules — validated and reversible.
 
 ## Security properties and honest limits
 
-The threat model, adversary classes, and known residuals are written out in
+The threat model, adversary classes, and named residuals are written out in
 [PROJECT.md](PROJECT.md). The short version: `sysh` defends against a
 **compromised or misbehaving agent** (the `sy` account). It does not defend
-against root compromise of the server, and it does not fully defend against
-compromise of the operator's laptop — use a FIDO2 hardware-backed SSH key for
-root access to shrink that window.
+against root compromise of the server. Against compromise of the operator's
+laptop it is bounded by deployment requirements (the agent harness must run
+as a different OS user than your root SSH keys; FIDO2 hardware keys
+recommended for root) — and command output flowing to an LLM agent is
+externally observable by its provider, which the docs say out loud.
 
 ## Status
 
-**Design phase — under review.** The specification in [PROJECT.md](PROJECT.md)
-is complete and intended to be reviewed by engineers and security specialists
-before implementation begins. No code has been written yet.
+**Design phase — v2, post-review.** The specification in
+[PROJECT.md](PROJECT.md) has been through one external security review; all
+critical findings are folded in and dispositioned in its §13. Phase 1
+(base tier + observability) is the implementation target; elevation
+(phase 2) ships only after phase 1 is reviewed in production. No code has
+been written yet.
 
 ## License
 

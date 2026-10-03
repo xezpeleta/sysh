@@ -1,495 +1,579 @@
 # sysh — Project Specification
 
-Status: **design, pre-implementation**. This document is the review target.
-It is self-contained; no prior prototypes are assumed.
+Status: **design v2, pre-implementation.** This revision incorporates an
+external security review of v1 (disposition in §13). No prior prototypes are
+assumed; the document is self-contained.
 
 ---
 
 ## 1. Purpose and scope
 
-`sysh` is a login shell and companion verifier that lets an automated agent
-(a script, an LLM-driven CLI, an MCP client) operate a real server over
-normal SSH with least privilege and full accountability.
+`sysh` lets an operator delegate server work to an automated agent (a script,
+an LLM-driven CLI, an MCP client) over normal SSH — with a trustworthy record
+of everything the agent did.
 
-The problem it solves: operators want to delegate *specific* operational tasks
-to agents, but SSH grants all-or-nothing access. Giving an agent a root key is
-unacceptable; giving it a normal user is often useless and always unaudited in
-any agent-specific way.
+The problem: operators increasingly let agents operate real servers, and the
+options are all-or-nothing. A root key is unacceptable; a normal user is
+unaudited in any agent-specific way; and even when an agent *is* given broad
+power (snapshot-protected experimentation is a legitimate workflow), the
+operator's first question afterwards — *"it works, but what else did it do?
+which files did it change? which other hosts did it touch?"* — has no answer.
 
-`sysh` makes the agent's login itself the control point:
+`sysh` makes the agent's login itself the control point. The agent's account
+is an unprivileged system user whose login shell:
 
-- the agent's account is an unprivileged system user,
-- whose shell allow-lists exact commands (argv matching, no shell semantics),
-- whose every action is appended to a tamper-evident audit log,
-- and whose rare privileged needs are satisfied only by a human-approved,
-  single-use, argv-bound, short-lived grant token verified by a root-side
-  helper.
+- **records everything** — every exec attempt, allowed or denied, with the
+  full argv, the invoking key, the decision, and the outcome, to
+  kernel-attested sinks the agent cannot forge;
+- **can delimit** — enforce a strict allow-list of exact commands (argv
+  matching, no shell semantics, fixed absolute paths, scrubbed environment);
+- **never elevates** — no process in the agent's tree can gain privileges
+  (`PR_SET_NO_NEW_PRIVS`, kernel-enforced). When a command genuinely needs
+  root, a *human* approves it on the server, and the human's tool — not the
+  agent — executes it (§9, phase 2).
+
+Phase 1 delivers the record and the delimiting. Elevation-through-approval is
+phase 2, sequenced deliberately so the harder security surface ships only
+after the base is reviewed in production.
 
 ## 2. Non-goals
 
 - **Not a sandbox.** The agent runs real commands on the real host as a real
-  unprivileged user. No chroot, no namespaces, no microVMs. If you need
-  isolation, run `sysh` inside whatever isolation you already have.
-- **Not a monitoring/SIEM system.** It audits its own channel only.
-- **Not an agent framework or harness.** No prompting, no planning, no tool
-  orchestration beyond what SSH argv already provides.
-- **Does not manage human access.** Operator SSH is untouched; `sysh` never
-  modifies other users, other keys, or default sshd behavior beyond a
-  `Match` block scoped to the agent user.
+  unprivileged user. No chroot, namespaces, or microVMs.
+- **Not root-without-approval.** Shops that want an unrestricted root agent
+  are out of scope. The closest `sysh` offers is *permissive mode* (§6.6):
+  unlimited as the unprivileged `sy` user, fully recorded, rollback via your
+  existing snapshots — never root.
+- **Not monitoring or a SIEM.** `sysh` emits structured, attributable events
+  (journal, auditd); shipping and correlating them is your existing stack's
+  job.
+- **Not an agent framework.** No prompting, no planning. Any SSH client works.
+- **Does not manage human access.** Operator SSH untouched; `sysh` adds one
+  system user, one `Match` block scoped to that user, and nothing else by
+  default.
 - **Does not defend against root compromise** of the server, by definition.
-- **Is not a policy authoring UI.** Policies are files; author them with
-  whatever you use today (editor, git, code review).
 
 ## 3. Architecture
 
-Two components, both on the server. One optional helper on the operator side.
+One static Go binary on the server, behaving by role:
 
 ```
-┌────────────────────────────── server ──────────────────────────────┐
-│                                                                    │
-│  sshd ── exec ──> /usr/bin/sysh            (login shell, uid=sy)   │
-│                     │  policy check (signed, root-owned)           │
-│                     │  audit append (uid-stamped)                  │
-│                     │                                              │
-│                     │ privileged argv + valid token?               │
-│                     ▼                                              │
-│           sudo /usr/lib/sysh/sysh-exec     (root, ONE sudoers line)│
-│                     │  verify token: host-key signature,           │
-│                     │  argv-hash binding, TTL, replay journal      │
-│                     ▼                                              │
-│               exec argv as root + corroborating audit entry        │
-│                                                                    │
-│  /etc/sysh/  (root-owned): policy.toml+sig, host keypair,          │
-│              authorized_keys, docs/                                │
-│  /run/sysh/  (root-owned): approvals/, token journal, lockdown     │
-│  /var/log/sysh/audit.log   (append-only)                           │
-└────────────────────────────────────────────────────────────────────┘
-        ▲                                    ▲
-        │ ssh, per-host agent key            │ ssh, operator's own key
-        │ (agent channel, untrusted)         │ (control channel, root)
-   any SSH client                        human operator
+┌────────────────────────────── server ─────────────────────────────────┐
+│                                                                       │
+│ sshd (Match user=sy) ── exec ──> sysh -c '<argv…>'     uid=sy         │
+│    │                                    │ policy check (root-owned)   │
+│    │ ExposeAuthInfo                     │ PR_SET_NO_NEW_PRIVS         │
+│    ▼ (key fingerprint)                  │ systemd-run scope per exec  │
+│  /etc/sysh/keys.map (root)              │ env scrub, rlimits, cgroup  │
+│                                         ▼                             │
+│                            child runs as unprivileged sy, NNP-bit set │
+│                                         │                             │
+│                            journald ← every decision, kernel-attested │
+│                              (_UID/_PID/_EXE — sy cannot forge)       │
+│                                                                       │
+│  [opt-in, phase 1] auditd: UID-scoped execve / write / connect rules  │
+│                                                                       │
+│  [phase 2] root, interactive:                                         │
+│     sysh approve req_…  → re-check policy → systemd-run as root       │
+│     sysh-result req_…   → agent fetches read-only outcome            │
+│                                                                       │
+│  /etc/sysh/  (root-owned 0644/0600): authorized_keys, keys.map,       │
+│              policy.toml, docs/                                       │
+│  /var/spool/sysh/requests/ (sy-writable; untrusted data; phase 2)     │
+│  /run/sysh/  (root-owned): results, request state                     │
+│  /run/sysh-tripwire/ (world-writable, sticky): lockdown only          │
+└───────────────────────────────────────────────────────────────────────┘
+        ▲                                     ▲
+        │ ssh, per-host agent key             │ ssh, operator's own key
+        │ (agent channel, untrusted)          │ (control channel, root)
+   any SSH client                         human operator
 ```
 
 Trust boundaries:
 
-- **Agent channel** (`sy@`): fully untrusted. Everything it touches is
+- **Agent channel** (`sy@`): fully untrusted; everything it touches is
   enforced or verified host-side.
 - **Control channel** (`root@`): the operator's own SSH, out of `sysh`'s
-  scope. All control operations (`sysh auth`, `sysh policy install`,
-  `sysh approvals`, `sysh approve`) are local commands invoked over it.
-- **The `sy` UID cannot escalate, cannot rewrite its policy, its keys, its
-  audit trail, or its pending approval records.** This is the load-bearing
-  property; every design decision below serves it.
+  scope. All control operations (`sysh auth add`, `sysh policy install`,
+  `sysh approvals`, `sysh approve`, `sysh doctor`, `sysh audit`) are local
+  commands invoked over it.
+- **Load-bearing property:** the `sy` UID cannot elevate (NNP), cannot
+  rewrite its policy, keys, key map, or any root-side state, and cannot
+  forge its audit record. Every design decision below serves this.
 
 ## 4. Deployment
 
 ### 4.1 Package
 
-A single deb package `sysh` ships:
+A single deb `sysh` shipping exactly one static binary, `/usr/bin/sysh`,
+plus docs. No daemon, no socket, no service, no setuid, no sudoers. Hard
+dependency: systemd (exec scopes, journald). Optional: auditd (§8.4).
 
-- `/usr/bin/sysh` — login shell and control subcommands (static Go binary)
-- `/usr/lib/sysh/sysh-exec` — privileged verifier (static Go binary)
+The laptop-side MCP bridge (`sysh-mcp`) is a **separate distribution** — it
+runs in a different trust domain (§10).
 
-There is intentionally no daemon, no socket, no service. The only running
-code is whatever an SSH session invokes.
+### 4.2 postinst (transactional, idempotent)
 
-### 4.2 postinst (all host-local setup)
+1. Create system user `sy` (home `/var/lib/sysh`, root-owned, non-writable
+   by `sy`; shell `/usr/bin/sysh`). **If a `sy` user pre-exists, verify it
+   has no supplementary groups** (`sudo`, `adm`, `docker`, …); refuse with a
+   clear error if it does.
+2. Create `/etc/sysh/` (root:root 0755), `/run/sysh/` (root:root 0755),
+   `/var/spool/sysh/requests/` (root:root 0730, `sy`-writable),
+   `/run/sysh-tripwire/` (1777, sticky).
+3. Install the sshd drop-in (§5.3). Validate with `sshd -t` before reload;
+   **roll back on failure** — a bad drop-in must never lock out admins (P7).
+4. debconf: enable auditd integration? (default yes if auditd present)
+   → install UID-scoped rules (§8.4).
+5. `purge` removes the user, `/etc/sysh`, the sshd drop-in, the auditd
+   rules, and the spool. Audit history in the journal is intentionally kept.
 
-The package `postinst` performs, transactionally and idempotently:
+No keys are generated at install time (nothing is signed — §12), so cloned
+images and golden templates are safe.
 
-1. Create system user `sy` (home `/var/lib/sysh`, owned root, non-writable
-   by `sy`; shell `/usr/bin/sysh`).
-2. Generate the **host keypair** `/etc/sysh/host.ed25519` (root:root 0600)
-   and `host.ed25519.pub` — the signing key for policies and grant tokens.
-3. Create `/etc/sysh/`, `/run/sysh/`, `/var/log/sysh/audit.log`
-   (append-only attribute where the filesystem supports it).
-4. Install an sshd drop-in `Match` block scoped to user `sy`:
-   `AuthorizedKeysFile /etc/sysh/authorized_keys` (root-owned 0600 — the
-   agent user cannot add keys to itself), plus
-   `DisableForwarding yes`, `PermitTTY no`, `X11Forwarding no`.
-5. **Privileged tier (debconf question, default *no*):** if enabled, install
-   the single sudoers line
-   `sy ALL=(root) NOPASSWD: /usr/lib/sysh/sysh-exec`.
-   If not enabled, no sudoers entry, and `sysh-exec` is inert: the base
-   install has **zero root-elevation surface**.
-
-Rollback on failure removes only what this run created.
-
-### 4.3 Operator onboarding (over plain SSH, no orchestrator)
+### 4.3 Operator onboarding (plain SSH, no orchestrator)
 
 ```console
-$ sy keygen server.example        # or plain ssh-keygen; prints:
-  restrict ssh-ed25519 AAAA… sysh-agent/server.example
-$ ssh root@server.example 'sysh auth add' <<< '<that line>'
+$ ssh-keygen -t ed25519 -f ~/.config/sysh/keys/server.example -C sysh-agent/server.example
+$ ssh root@server.example 'sysh auth add' <<< 'restrict ssh-ed25519 AAAA… sysh-agent/server.example'
 $ ssh root@server.example 'sysh policy install' < server.example.toml
 ```
 
-`sysh auth add` (run as root) validates the line's options (rejects anything
-that grants a command, pty, forwarding, or agent access) and appends it to
-`/etc/sysh/authorized_keys`. `sysh policy install` (run as root) reads a
-policy on stdin, validates it, signs it with the host key, and installs it
-atomically (`policy.toml` + `policy.sig`, root-owned).
-
-The per-host agent key lives on the operator side at
-`~/.config/sysh/keys/<host>`; the host never sees it.
-
-### 4.4 Two tiers
-
-| | Base | Privileged |
-|---|---|---|
-| sudoers lines | none | one (`sysh-exec` only) |
-| Elevated exec possible | no — policy `privileged = true` rules refuse with exit 126 | yes, token-gated |
-| Approval machinery | absent | present |
-
-Enforcement is layered: a privileged rule on a base-tier host is refused at
-exec time regardless of what any client claims. Upgrading to the privileged
-tier later is additive (install the sudoers line); nothing else changes.
+`sysh auth add` (root): parses the line with a real parser
+(`ssh.ParseAuthorizedKey`), **requires `restrict`**, rejects embedded
+newlines and any option granting command/pty/forwarding/agent access,
+optionally requires `from=` (configurable), computes the key fingerprint,
+prompts for a key ID, and writes both the line (`/etc/sysh/authorized_keys`,
+root:root 0644 — sshd reads AuthorizedKeysFile as the target user) and
+`fingerprint → key-id` into `/etc/sysh/keys.map` (root:root 0600).
 
 ## 5. Identity and keys
 
-- **Host keypair** (Ed25519, per server, root-only): signs policies at
-  install and mints/verifies grant tokens. Compromise of it requires root,
-  which is outside the threat model by definition.
-- **Agent keys** (Ed25519, per host, operator-side): ordinary SSH keys.
-  Agent identity in audit entries is the key's comment (e.g.
-  `sysh-agent/server.example`). Multiple keys = multiple agents; revocation
-  is removing the line from `/etc/sysh/authorized_keys`.
+- **Agent keys**: ordinary per-host Ed25519 keys on the operator side
+  (`~/.config/sysh/keys/<host>`); the host never sees private material.
+  Revocation = remove the line from `authorized_keys`.
+- **Key identity at exec time**: the sshd `Match` block sets
+  `ExposeAuthInfo yes`; sshd writes the accepted-key details to a
+  per-session file (`$SSH_USER_AUTH`) which the shell reads to obtain the
+  **fingerprint**. The displayed key ID comes from the root-owned
+  `keys.map`. Identity in audit events is therefore kernel/sshd-derived,
+  not agent-claimed.
 - **Operator root access**: the operator's own SSH keys. **Recommended:
-  FIDO2 hardware-backed keys (`ed25519-sk`)** for the control channel. This
-  is the only hardware recommendation in the system, and it uses stock
-  OpenSSH — no custom cryptography.
-- Server host-key verification on the operator side is standard
-  `known_hosts` semantics. `sysh` adds nothing and replaces nothing there.
+  FIDO2 hardware-backed keys (`ed25519-sk`).** Deployment requirement DR1
+  (§10/§11) covers separation from the agent harness.
+- Host-key verification on the operator side is stock `known_hosts`
+  semantics. `sysh` adds nothing there.
 
-## 6. Gateway semantics (`sysh` as login shell)
+### 5.3 sshd drop-in
+
+Scoped to `Match user sy`:
+
+```
+AuthorizedKeysFile /etc/sysh/authorized_keys
+AuthenticationMethods publickey
+DisableForwarding yes
+PermitTTY no
+X11Forwarding no
+AllowAgentForwarding no
+PermitTunnel no
+PermitUserRC no
+ExposeAuthInfo yes
+```
+
+`sysh doctor` verifies the **effective** configuration with
+`sshd -T -C user=sy,host=<host>,addr=<addr>` (sshd is first-match-wins and
+`Include` support varies by distro) and fails on any drift.
+
+## 6. Gateway semantics (`sysh` as login shell, uid=sy)
 
 ### 6.1 argv is the unit of trust
 
-sshd execs the login shell as `sysh -c '<command string>'` for a non-interactive
-SSH command. `sysh`:
+sshd execs the shell as `sysh -c '<command string>'`. `sysh`:
 
-- splits the command string on whitespace (IFS), performing **no** shell
-  expansions, no globbing, no quoting interpretation, no metacharacter
-  semantics. `a; b`, `a | b`, `$(x)`, backticks are literal words that will
-  not match any sane policy and are denied.
-- treats the resulting argv as the request. Matching is positional,
-  length-aware (`len(argv) >= len(match)`), with `*` as an intra-word glob
-  and `|` as alternatives inside a position.
+- splits the string on whitespace with **no** shell semantics — no
+  expansions, globbing, quoting, or metacharacter interpretation
+  (`a; b`, `a | b`, `$(x)` are literal words that match no sane rule);
+- **rejects any argv containing non-printable-ASCII bytes** (exit 3) —
+  defeating terminal-escape / bidi-override / homoglyph attacks in later
+  displays, and making hashing and logging unambiguous;
+- treats the resulting argv as the request.
 
-There is no shell behind the gateway. Compound operational needs are met by
-allow-listing a specific command with fixed arguments (or a curated script
-installed by the operator for exactly that purpose), never by granting a
-shell.
+### 6.2 Matching (hardened)
 
-### 6.2 Builtins (pseudo-commands, always allowed)
+Per rule, each position is either a literal or a **pattern**: an implicitly
+anchored regex (full match) that the linter rejects unless it can never
+match a string starting with `-` (no option injection). Examples:
+`"nginx|unifi"`, `"[a-z0-9@._\\-]+"`.
+
+- **Exact length by default**: extra arguments are denied. Opt-in
+  `rest = "<pattern>"` allows additional positions, each matching that
+  anchored pattern.
+- **All deny rules are evaluated first**; any match refuses. Then the first
+  allow match wins.
+- Rules carry an absolute `path` to the binary (no `PATH` search); the
+  linter verifies existence, root ownership, and that neither the binary
+  nor any ancestor directory is group/world-writable.
+- Execution environment is fixed: minimal scrubbed env (no `LD_*`, no
+  `PAGER`/`SYSTEMD_PAGER`/`GIT_*`/`LESSOPEN`; fixed `PATH`, `HOME`,
+  `TERM=dumb`), `cwd=/var/lib/sysh`, `umask 077`, rlimits on file
+  descriptors and processes, stdin/stdout/stderr only.
+
+### 6.3 Builtins (always allowed, read-only)
 
 - `sy-docs` — dump `/etc/sysh/docs/*.md` (operator-maintained host
-  knowledge base; how the agent learns *what* to run).
-- `sy-policy` — dump the effective policy (minus signatures) so agents can
-  self-check before attempting.
+  knowledge; discoverability is the difference between an agent that asks
+  and one that guesses).
+- `sy-policy` — dump the effective policy.
+- `sysh-result <req>` — (phase 2) fetch the outcome of an approved request.
 
-Both are read-only and exist because discoverability is the difference
-between an agent that asks and an agent that guesses.
+### 6.4 Result reporting
 
-### 6.3 Token relay
-
-A grant token is presented as a pseudo-command:
-
-```
-sysh-token gt_… -- <real argv…>
-```
-
-The gateway strips the wrapper, checks the real argv against policy, and
-only then hands the token + argv to the privileged tier. (Open question Q1
-lists alternatives considered.)
-
-### 6.4 Exit codes (contract for automation)
-
-| code | meaning |
-|---|---|
-| 0 | success |
-| 2 | lockdown active |
-| 3 | malformed request (empty/oversized argv, bad token syntax) |
-| 30 | approval required (privileged argv, no valid token); request id on stderr |
-| 77 | token rejected (invalid signature, expired, argv mismatch, or replayed) |
-| 124 | exec timeout (per-policy, default 60s) |
-| 125 | policy denied |
-| 126 | privileged tier unavailable on this host |
-
-Codes ≥ 100 pass through the child's own exit status.
+Every terminal outcome writes **one structured line to stderr** (JSON:
+class, detail, request id where applicable, key id). This is the
+authoritative machine-readable contract. The process exit code is kept as
+human convenience only: child exit statuses pass through when a child ran;
+gateway refusals use a documented set (2 lockdown, 3 malformed argv, 30
+approval required, 125 denied, 126 privileged unavailable pre-phase-2) —
+with the explicit caveat that these collide with child codes (`systemctl
+status` returns 3; `timeout` uses 124), which is exactly why automation
+must read the stderr line.
 
 ### 6.5 Lockdown
 
-Any client may create `/run/sysh/lockdown` (a tripwire: e.g. an agent that
-notices compromise can lock its own channel; so can any local user). While
-present, all agent-channel exec is refused (exit 2). Only root may remove it.
-Pending approvals are not cleared by lockdown; root decides each one.
+Any local user may create `/run/sysh-tripwire/lockdown` (a tripwire: an
+agent that notices compromise can lock its own channel). While present, all
+agent-channel exec is refused (exit 2). Only root clears it, by fixed name.
+Root code never opens or follows paths inside any `sy`-writable directory.
 
-## 7. Policy model
+### 6.6 Permissive mode
 
-TOML, human-authored, host-signed at install:
+A policy may set `mode = "permissive"`: every well-formed argv (still
+ASCII-checked, still NNP, still scoped and journaled) runs as the
+unprivileged `sy` user; the OS's own permissions are the only limit. This
+serves the snapshot-protected "give it room, keep the record" workflow. It
+never grants root; `privileged` rules in permissive mode behave as in §9.
+
+### 6.7 Process containment
+
+Every child exec:
+
+- runs under `PR_SET_NO_NEW_PRIVS` (set before any thread spawns, or via
+  re-exec — the flag is per-thread in Linux). Setuid and sudo become
+  unusable for the entire agent tree, on both tiers, regardless of host
+  configuration. "No elevation surface" is a kernel property, not a claim
+  about config files.
+- runs inside a transient systemd scope
+  (`systemd-run --scope --unit sysh-<keyid>-<seq>`), giving journal
+  attribution, `TasksMax`, `MemoryMax`, and kill-the-whole-cgroup on
+  timeout (a `setsid`/double-fork cannot escape a cgroup, unlike a process
+  group).
+- has output capped; on timeout the scope is killed (exit 124).
+
+Multiple agent keys share one UID: key identity is **attribution, not
+isolation** (R4).
+
+## 7. Policy
+
+TOML, human-authored, root-installed:
 
 ```toml
-version = 1
+version = 2
 host = "server.example"
+mode = "enforcing"            # or "permissive" (§6.6)
 
 [[rule]]
-match = ["uptime"]
+argv = ["uptime"]
+path = "/usr/bin/uptime"
 
 [[rule]]
-match = ["systemctl", "status|show", "*"]
-
-[[rule]]
-match = ["journalctl", "-u", "*"]
+argv = ["systemctl", "status", "[a-z0-9@._\\-]+"]
+rest = "[a-z0-9@._\\-]+"
+path = "/usr/bin/systemctl"
 timeout = 10
 
 [[rule]]
-match = ["systemctl", "restart", "nginx|unifi"]
-privileged = true
+argv = ["find", "/var/log"]
+deny = true
+
+[[rule]]
+argv = ["systemctl", "restart", "nginx|unifi"]
+path = "/usr/bin/systemctl"
+privileged = true             # phase 2: never executed by the agent (§9)
 ```
 
-- Rules are evaluated in order; first match wins. An explicit
-  `deny = true` rule outranks any earlier match.
-- `privileged = true` marks rules whose argv may run as root **only** with a
-  valid grant token (§8); on a base-tier host such rules exit 126.
-- `timeout` bounds the child; on expiry the process group is killed and the
-  exit is 124.
-- The file is signed by the host key at install; the signature covers the
-  canonical byte content. The gateway verifies on every load and refuses to
-  serve policy (fail-closed, exit 125 for all exec) if verification fails.
-- File and signature are root-owned 0644/0600 in `/etc/sysh/`; the `sy` UID
-  cannot write them.
+- `sysh policy install` (root) **runs the linter and refuses on any
+  finding**; `sysh doctor` re-lints installed policies.
+- The linter (v1, mandatory): pattern safety (anchored, cannot match a
+  leading `-`, cannot match empty), path checks (§6.2), and a
+  package-maintained **escape-hatch denylist** — shells and interpreters
+  (`sh`, `bash`, `python*`, `perl`, `ruby`, `node`, `awk`, …), argv
+  passthrough / execution wrappers (`env`, `nohup`, `setsid`, `stdbuf`,
+  `timeout`, `nice`, `xargs`, `find`, `tar`, `git`, `systemd-run`), remote
+  and privileged tools (`ssh`, `scp`, `sftp`, `nc`, `socat`, `docker`,
+  `podman`, `sudo`, `su`, `mount`), and pagers/editors (`less`, `vi*`, …).
+  Over-broad rules are the most likely real-world failure; the linter is
+  the countermeasure, not an afterthought.
+- Loading: open once, `fstat` ownership/mode of file and ancestors, parse
+  **that same buffer** (no re-open TOCTOU). Fail closed (all exec denied,
+  stderr line explains) on any anomaly.
+- The `sy` UID cannot write `/etc/sysh`; no signature scheme is used — §12
+  explains why it was removed.
 
-**Rationale for host-local signing:** the signature's job is tamper-evidence
-below root (a compromised agent must not be able to rewrite its own policy).
-Fleet-wide provenance is a non-goal; operators push policy over their root
-channel, and root is trusted on its own host by definition.
+## 8. Observability (phase 1 headline)
 
-## 8. Privileged tier
+The phase-1 goal, in the operator's words: *"everything works — but what
+else did it do? which files did it create or modify? which other servers
+did it touch?"*
 
-### 8.1 The sudoers surface
+### 8.1 Event model
 
-Exactly one line:
+Every exec attempt — allowed, denied, malformed, locked down — produces one
+structured event: timestamp, key id + fingerprint (sshd-derived, §5),
+decision + matching rule index, full argv, exit status, duration, systemd
+unit name. Phase 2 adds request/approval/result events to the same stream.
 
-```
-sy ALL=(root) NOPASSWD: /usr/lib/sysh/sysh-exec
-```
+### 8.2 Sinks (separated, by who can write them)
 
-`sysh-exec` is a small static binary whose argv handling is minimal by
-construction. It performs no shell interpretation, no path resolution beyond
-its fixed allow-list, and only two verb modes (request-record, verified-exec).
-It is the only root code reachable from the agent channel, and it is intended
-to be small enough to fully review. (Setuid was rejected: sudoers keeps the
-decision visible in standard host configuration and auditable by standard
-tooling.)
+- **`sy`-side events → journald** (native API; identifier `sysh`). The
+  journal attaches kernel-trusted `_UID`, `_PID`, `_EXE` that the `sy` UID
+  cannot forge. **Fail closed:** if the journal write fails, the exec is
+  denied.
+- **Root-side events (phase 2: approvals, root executions) →
+  `/var/log/sysh/root.log`**, root:root 0600, **hash-chained** (each entry
+  includes the hash of the previous). `sy` has no write handle on it at all.
+- No shared writable audit file exists. (The v1 design's single
+  append-only log was forgeable by `sy` — it could append fake root-side
+  entries; the review caught this, and the split removes the entire class.)
 
-### 8.2 Grant tokens
+### 8.3 Fleet correlation
 
-Format: `gt_<base64url(payload)>_<base64url(sig)>`, Ed25519-signed with the
-host key. Payload:
+`sysh` emits; it does not ship. Forward journals and audit logs with your
+existing stack (rsyslog, `systemd-journal-remote`, Wazuh). Cross-host
+questions — "which other servers were touched during this incident?" — are
+answered by correlating the `sysh` identifier across hosts in that stack.
+`sysh audit tail` (root) gives the local view.
 
-```json
-{
-  "v": 1,
-  "host": "server.example",
-  "req": "req_a1b2c3",
-  "argv_sha256": "…",
-  "approver": "root",
-  "exp": 1234567890
-}
-```
+### 8.4 auditd integration (opt-in, kernel-attested)
 
-Properties, each independently enforced at exec time:
+The package can install auditd rules scoped to the `sy` UID, keyed `sysh`:
+`execve`, write-class syscalls (`open`, `openat`, `creat`, `rename`,
+`unlink`, …), and **`connect`** (destination addresses). This answers
+"which files did it create or modify, which hosts did it contact" **at
+kernel level** — below any forging ability of the UID — landing in
+`/var/log/audit/audit.log` for the same forwarding pipeline. Rules are
+removed cleanly on purge.
 
-- **single use** — the token's SHA-256 is appended to an append-only journal
-  (`/run/sysh/tokens.journal`) at first use; a second presentation exits 77;
-- **argv-bound** — `argv_sha256` must equal the hash of the argv actually
-  presented, else 77;
-- **host-bound** — `host` must match, else 77;
-- **short-lived** — `exp` is at mint time + TTL (default 120s);
-- **human-minted** — only `sysh approve` (root, interactive TTY) creates
-  them (§8.3).
+### 8.5 Disclosure
 
-### 8.3 Approval flow
+Command output — including phase-2 root command output — flows to the agent
+and, for LLM agents, to its model provider. Documented to approval holders;
+operators should assume outputs are externally observable.
 
-1. The agent execs a `privileged` rule without a token. The gateway asks
-   `sysh-exec` to **record a pending request** — root writes
-   `/run/sysh/approvals/req_….json` containing the argv, its hash, the
-   requesting key id, and a timestamp — and the client gets exit 30 with the
-   request id. The gateway itself cannot write this record; it is
-   **tamper-proof against the `sy` UID by construction**. This defeats the
-   masquerade attack (agent shows the human one argv, then runs another):
-   the approver always reads the host-recorded argv, and the minted token is
-   bound to *that* argv's hash.
-2. A human lists and approves on the server, interactively:
+## 9. Privileged operations (phase 2 — approve-executes)
+
+Design principle: **approval chooses *when*; the root-owned policy chooses
+*what*.** The agent never executes a privileged argv; there is no bearer
+token to steal, replay, or transport.
+
+1. The agent execs an argv matching a `privileged` rule. The gateway writes
+   a **request file** into `/var/spool/sysh/requests/` (a `sy`-writable
+   directory whose contents are *untrusted data*): argv, fingerprint,
+   key id (claimed label), timestamp, request id. Strict grammar,
+   size-capped, ASCII-only. The client receives exit 30 + the request id on
+   stderr and should report and stop (the MCP contract says the same, §10).
+2. A human, interactively on the server:
 
 ```console
 root@server:~# sysh approvals
 req_a1b2c3  argv=["systemctl","restart","nginx"]  key=sysh-agent/server.example  age=12s
 root@server:~# sysh approve req_a1b2c3
-argv[0] to confirm: systemctl_         # must be typed; stdin must be a real TTY
-token: gt_…                             # hand to the agent out-of-band
+confirm (8 chars): 3f9a2c1e_
 ```
 
-3. `sysh approve` requires: run as root, stdin is a TTY (pipe-fed
-   confirmation is refused), the typed string equals the recorded argv[0],
-   the request exists and is fresh. It then mints the token and **marks the
-   request consumed**.
-4. The agent retries via `sysh-token gt_… -- argv…`; verification per §8.2;
-   success runs the argv as root and appends a corroborating root-side audit
-   entry (uid=0, token id, approver, request id).
+   `sysh approve` (root; stdin must be a real TTY — pipes are refused):
+   opens the request with `O_NOFOLLOW`, size-limits and parses it with a
+   strict grammar, **re-checks the argv against the policy's `privileged`
+   rules itself** (an operator cannot approve anything policy forbids),
+   displays the full argv and absolute path plus a short confirmation code
+   (first 8 hex of the NUL-delimited argv hash — binding the confirmation
+   to the *whole* argv), requires that code to be typed, then **executes
+   from the same in-memory copy it displayed**, under a one-shot
+   `systemd-run` unit (clean environment, cgroup, `TasksMax`, `MemoryMax`,
+   timeout). The result is written root-side; the agent fetches it
+   read-only via `sysh-result req_…` (TTL'd, then removed).
+3. Request hygiene: identical live requests (same argv hash) are deduped;
+   more than 5 live pending requests refuse new ones until approved or
+   expired (default request TTL 10 min) — the approval-fatigue counter
+   (R2). Agent-supplied "reason" text, if ever added, is untrusted display
+   data.
+4. No sudoers line, no setuid helper, no tokens, no replay journal exists
+   anywhere in this design. Elevation happens only inside a root process a
+   human is watching.
 
-**Abuse lockout:** more than 5 live pending requests from one host-key
-refuses new privileged requests until they are approved or expire
-(default TTL for requests: 10 min). Approval fatigue is the known social
-residual; the lockout and the typed confirmation are the counters.
+Future (not v1): FIDO2 touch-gated approval via stock
+`ssh-keygen -Y sign/verify` over the request hash — closing the
+operator-laptop-malware residual (R1) without custom crypto.
 
-## 9. Audit
+## 10. Laptop side: `sysh-mcp` (separate distribution)
 
-`/var/log/sysh/audit.log`, append-only (filesystem `+a` attribute where
-supported; rotation and archival are the operator's log stack, out of scope).
+A small stdio MCP server for agent harnesses. It holds only per-host agent
+keys (unprivileged by construction) and **never** has approval or listing
+power: its tools are `sy_exec`, `sy_docs`, `sy_policy`. An agent needing
+elevation surfaces the request id and finishes its turn.
 
-Each line is JSON with: timestamp, event class (`allowed`, `denied`,
-`approval_required`, `approval_granted`, `token_used`, `token_rejected`,
-`lockdown`), the full argv, the invoking key id, the exit code, and — for
-privileged executions — a second corroborating line written by `sysh-exec`
-as root (uid 0, request id, approver). The two-line pair is the evidence
-that a human actually gated the elevation.
+Hard requirements (local code-execution on the operator laptop is the risk
+here):
 
-The `sy` UID can append (it must, to log its own channel) but cannot
-truncate, rewrite, or rotate the file. Appendix-level caveat: `+a` is
-ext4/xfs-specific; on filesystems without it, the mitigation is
-permissions + accepting that a compromised agent can spam but not erase
-(Q4).
+- **Hosts come from a fixed, operator-edited registry file** — never from
+  agent input. This kills the `-oProxyCommand` argument-injection class.
+- ssh is invoked as `ssh -F <controlled config> -- sy@<host> -- <argv…>`
+  with `IdentitiesOnly`, `BatchMode`, `ClearAllForwardings`,
+  `PermitLocalCommand=no`; `sy@` is hardcoded; `--` is always used.
+- Agent-supplied argv is validated (printable ASCII, no whitespace/control
+  characters — reject rather than let ssh re-split).
+- Exit codes and the stderr contract (§6.4) surface as structured results;
+  `approval_required` responses instruct the agent to report and stop, not
+  poll.
 
-## 10. Operator-side helper: `sy`
+`sysh-mcp` runs in a different trust domain from the server package and is
+distributed separately. **Deployment requirement DR1:** the agent harness
+(and `sysh-mcp`) runs as a **dedicated OS user on the operator machine**,
+holding only agent keys — never the operator's root SSH keys, never
+`ControlMaster`, never agent forwarding for root sessions. Without DR1 the
+model collapses to "the agent can read your root key"; with it, harness
+compromise does not compromise the control channel.
 
-A tiny optional tool for the operator's laptop. Everything it does is
-otherwise expressible as plain SSH; it exists only for the pieces that are
-not:
-
-- `sy keygen <host>` — create `~/.config/sysh/keys/<host>` (Ed25519) and
-  print the exact `restrict …` authorized_keys line. (Plain `ssh-keygen` +
-  a documented line would also work; this only removes a copy-paste hazard.)
-- `sy mcp` — a stdio MCP server exposing three tools to agent harnesses:
-  `sy_exec` (run argv on a host via `ssh -i <key> sy@host`, mapping exit
-  codes to structured results), `sy_docs`, `sy_policy`. It shells out to the
-  system `ssh` — it holds no credentials of its own beyond the per-host
-  agent keys, which are unprivileged by construction.
-  **The MCP surface deliberately has no approval capability**: it cannot
-  list, mint, or relay tokens. An agent that needs elevation must surface
-  the request id and stop.
-
-The control operations (`auth add`, `policy install`, `approvals`,
-`approve`, `audit`, `doctor`) are **not** wrapped. They are plain SSH
-commands, and keeping them that way is a design decision: the operator
-should see and feel root when using root.
-
-`sysh doctor` (root, on the server) checks installation conformance: tiers,
-key/file ownership and modes, policy signature validity, sshd block
-presence, audit writability.
+Key generation needs no tool: it is the documented `ssh-keygen` one-liner
+of §4.3.
 
 ## 11. Threat model
 
 ### Adversaries
 
-- **A1 — compromised or misbehaving agent** (the `sy` account, or a client
-  in possession of an agent key). *Primary target.*
-- **A2 — a malicious local unprivileged user** on the server. `sysh` should
-  be neutral to them: the lockdown tripwire is theirs to pull, nothing else
-  is.
-- **A3 — malware on the operator's laptop.** Partially in scope; see R1.
-- **A4 — root compromise of the server.** Out of scope; game over by
-  definition.
-- **A5 — network attacker** between clients and server. Mitigated by SSH
-  itself; `sysh` adds no channels.
+- **A1 — compromised or misbehaving agent** (the `sy` account, or a holder
+  of an agent key). Primary target.
+- **A2 — malicious local unprivileged user.** Neutral: the tripwire is
+  theirs to pull; nothing else is reachable.
+- **A3 — malware on the operator's laptop.** Partially in scope; bounded by
+  DR1 (harness user separation) and FIDO2 root keys. See R1.
+- **A4 — root compromise of the server.** Out of scope; game over.
+- **A5 — network attacker.** Mitigated by SSH; `sysh` adds no channels.
 
 ### Properties
 
-- **P1** — An agent can execute exactly the allow-listed argv, nothing else.
-  No shell, no expansion, no compound syntax (§6.1).
-- **P2** — An agent cannot modify: its policy, its authorized_keys, its
-  pending approval records, its audit history, the host keypair (§3, §7, §8.3).
-- **P3** — Privileged execution requires a token that is single-use,
-  argv-bound, host-bound, ≤120s old, and minted by an interactive root
-  confirmation (§8).
-- **P4** — The base tier has zero root-elevation surface: no sudoers, no
-  setuid, no daemon (§4.4).
-- **P5** — Every exec attempt, allowed or denied, is audited; privileged
-  executions produce a root-corroborated pair (§9).
-- **P6** — The MCP surface never grants approval power (§10).
-- **P7** — `sysh` weakens nothing on the host: it adds one system user, one
-  `Match` block scoped to that user, and (opt-in) one sudoers line. It never
-  edits global sshd settings or other users.
+- **P1** — the agent executes exactly allow-listed argv (exact length,
+  anchored patterns, absolute paths, scrubbed env), or — in permissive
+  mode — anything, but only as unprivileged `sy`.
+- **P2** — the agent cannot modify its policy, authorized_keys, key map,
+  request state, root-side results, or root-side audit; and cannot forge
+  its own audit record (journald kernel attestation).
+- **P3** — **no process in the agent tree can gain privileges** (NNP,
+  kernel-enforced) — including via any setuid binary or sudoers line
+  elsewhere on the host.
+- **P4** — the base install has no elevation path at all; phase 2 adds
+  elevation only inside a root process a human is interactively driving,
+  gated on policy re-check and full-argv confirmation.
+- **P5** — every exec attempt is recorded before execution; audit failure
+  fails closed.
+- **P6** — the MCP surface never grants approval power, never accepts
+  hostnames from agents, and runs isolated from root credentials (DR1).
+- **P7** — `sysh` weakens nothing on the host: one system user, one scoped
+  sshd `Match` block, optional auditd rules; sshd changes are validated
+  (`sshd -t`) and rolled back on failure.
 
 ### Residual risks (accepted, named)
 
-- **R1 — operator endpoint compromise.** Laptop malware holding the root SSH
-  key can drive the control channel, including approvals (a TTY can be
-  synthesized locally and fed to `ssh -t`). Mitigations: FIDO2 key for root
-  (bounds *connection* auth to hardware), typed confirmations, audit
-  corroboration. A hardware-touch-per-approval is a possible future
-  extension, deliberately not in v1.
-- **R2 — approval fatigue.** A human clicking through requests is the weak
-  link; lockout, typed argv[0], and short TTLs bound but do not eliminate it.
-- **R3 — `sysh-exec` is root-reachable attack surface.** It is intentionally
-  minimal (fixed verbs, no shell, no path search, bounded parsing), but it
-  must be treated as security-critical code: fuzzed, reviewed, static.
-- **R4 — append-only audit relies on filesystem `+a`** where available;
-  without it, a compromised agent can flood (not erase) the log.
-- **R5 — policy globs are written by humans.** An over-broad `*` is an
-  operator error `sysh` cannot undo; `sysh policy install` validates
-  structure, not intent. (A lint pass is a possible addition.)
+- **R1 — operator endpoint compromise.** With DR1 + FIDO2 root keys,
+  harness-level malware cannot reach the control channel. Remaining:
+  malware running *as the operator user* can drive an `ssh -t` approval
+  session (a local TTY can be synthesized and fed). Mitigations: typed
+  full-argv confirmation code, request dedup, lockout, hash-chained root
+  audit. Full closure = FIDO2-signed approvals (§9, future).
+- **R2 — approval fatigue.** Dedup, short request TTL, typed confirmation,
+  lockout. Bounded, not eliminated.
+- **R3 — policy authoring errors.** The linter (patterns, paths,
+  escape-hatch denylist) is v1-mandatory, but a human can still write a
+  rule that is technically safe and operationally unwise.
+- **R4 — one UID, many agents.** Key identity is attribution, not
+  isolation: agent keys share signals, `/proc`, `/tmp`, and the filesystem
+  namespace.
+- **R5 — output exfiltration.** Command output flows to the agent and its
+  model provider (§8.5). Disclosed, not prevented.
+- **R6 — infrastructure trust.** systemd (scopes, journald), auditd, and
+  sshd are assumed functional and uncompromised; `sysh` builds on them
+  deliberately rather than reimplementing them.
 
-## 12. Explicitly rejected alternatives
+## 12. Rejected or removed (with reasons)
 
-- **Agent-side enforcement (prompt rules, harness policies):** the client is
-  the adversary; enforcement must be where the adversary is not.
-- **A management daemon / API plane:** another root-bearing service to
-  defend, and a network channel where SSH already suffices.
-- **chroot/jails/microVMs:** the product is *real host operation with least
-  privilege*, not isolation.
+- **Agent-side enforcement** (prompt rules, harness policies): the client
+  is the adversary.
+- **Management daemon / API plane:** another root-bearing service where
+  SSH suffices.
+- **chroot / jails / microVMs:** the product is real-host operation with
+  least privilege, not isolation.
 - **Standing sudo with command allow-lists:** sudoers glob matching is
-  string-based and famously bypassable; argv must be matched by code that
-  sees the real argv, and elevation must be event-based, not standing.
-- **Long-lived or reusable tokens:** every replay window is an attack window.
-- **A second network protocol:** SSH is the protocol. Everything else is
+  string-based and bypassable; elevation must be event-based.
+- **Bearer grant tokens, `sysh-exec`, the sudoers line, the replay journal,
+  token transport (all v1-design elements):** removed wholesale. The
+  sudoers line let the `sy` UID reach the privileged helper *without* the
+  gateway, making gateway-side controls (policy, lockdown, audit)
+  irrelevant on the elevation path; tokens added replay windows, transport
+  exposure, and race-prone journaling. The approve-executes model (§9)
+  provides the same human gate with none of that surface.
+- **Signatures on policy, host keypair:** removed. With host-local keys
+  they defended only against below-root writers, which file ownership and
+  permissions (verified at load) already cover; they added a failure mode
+  and key-management burden (cloned images sharing keys). Revisit only if
+  a multi-admin provenance requirement appears.
+- **A second network protocol:** SSH is the protocol; everything else is
   local commands.
 
-## 13. Open questions for reviewers
+## 13. Review disposition (v1 → v2)
 
-- **Q1 — token transport.** `sysh-token gt_… -- argv` as a pseudo-command is
-  explicit but puts the token in the command line (visible in `ps` on the
-  server for the duration of the SSH exec, and in shell histories on the
-  operator side). Alternatives: first-argv convention (`gt_… -- argv…`),
-  or a stdin handshake (breaks one-shot scripting). Current lean:
-  pseudo-command; token TTL is 120s and exposure is to the already-ssh-ed
-  host's local process listing. Input wanted.
-- **Q2 — `sy` UID write access to `/run/sysh/lockdown` and the audit file.**
-  Both are deliberate (tripwire; self-audit) but are the only places the
-  agent UID has a write handle. Confirm the appetite or propose hardening.
-- **Q3 — sudoers vs setuid for `sysh-exec`.** Sudoers chosen for visibility
-  in host configuration. Counter-arguments welcome.
-- **Q4 — audit append-only strategy** on filesystems without `+a` (e.g.
-  btrfs): accept flood-not-erase, or require forwarding to a remote sink
-  from the start?
-- **Q5 — pending-request recording via `sysh-exec`.** Recording requests
-  through the privileged helper (vs. gateway-written) buys tamper-proof
-  records at the cost of one extra sudo invocation per privileged request.
-  Confirm the trade.
-- **Q6 — key identity granularity.** Key comment as agent identity is weak
-  (operator-chosen string). Is a required key-id in the authorized_keys line
-  (enforced by `sysh auth add`) worth it?
-- **Q7 — the `sy` tool.** Is even the minimal `keygen`+`mcp` helper the right
-  cut, or should MCP live in a separate distribution entirely?
+v1 was externally reviewed. Disposition of the findings:
 
-## 14. Implementation plan (after review approval)
+| Finding | Resolution |
+|---|---|
+| `sy` could reach `sysh-exec` directly via sudo, bypassing all gateway controls | **Accepted, redesign.** Approve-executes model (§9); NNP on the whole agent tree (§6.7); sysh-exec/sudoers/tokens deleted (§12) |
+| Matcher over-broad (`len >=`, intra-word `*`, `--option=value` injection); deny/first-match contradiction; PATH search; env not scrubbed | **Accepted.** Exact length + anchored patterns that cannot match leading `-` (§6.2); deny-first (§6.2); absolute paths + scrubbed env (§6.2); mandatory linter with escape-hatch denylist (§7) |
+| Audit log forgeable by `sy`; "+a" unreliable; "tamper-evident" claim unsupported | **Accepted.** Sinks split: journald (kernel-attested) for `sy`-side, root-only hash-chained file for root-side; fail closed (§8.2) |
+| Approval step weak (argv[0] rubber stamp; Unicode display attacks; no dedup) | **Accepted.** Full-argv confirmation code; ASCII-only argv at the gateway (§6.1); dedup by argv hash (§9.3) |
+| MCP: host/argv injection → laptop code exec; harness/root-key separation | **Accepted.** Fixed host registry, locked ssh invocation, argv validation, separate distribution, DR1 (§10) |
+| authorized_keys 0600 breaks login; token/journal/hashing/spec bugs; ExposeAuthInfo; sshd drop-in gaps; postinst gaps; shared /run dir; policy TOCTOU; exit-code collisions; setsid escape; output exfiltration | **All accepted** and folded into §4–§8 as written above |
+| Q1–Q7 | Q1 moot (no tokens); Q2 dedicated tripwire dir (§6.5); Q3 moot (no helper); Q4 journald + root file (§8.2); Q5 root data authoritative, agent fields untrusted (§9); Q6 yes — fingerprint identity + key map (§5); Q7 separate `sysh-mcp` (§10) |
 
-1. `sysh` gateway: shell mode, policy engine, audit, builtins, lockdown.
-2. `sysh-exec`: token verify, request-record, journal, corroboration.
-3. Control subcommands: `auth add`, `policy install`, `approvals`,
-   `approve`, `audit`, `doctor`.
-4. Packaging: deb, postinst transaction, debconf tier question.
-5. `sy keygen`, `sy mcp`.
-6. Security review pass: fuzz `sysh-exec` parsers, audit the tokenization
-   and glob matcher, verify ownership/mode conformance tests.
+Partial deviations, for the reviewers' attention:
+
+- **Exit codes retained** alongside the structured stderr line (human
+  convenience; stderr documented as authoritative — §6.4).
+- **Signature removal goes further** than the review's "reconsider"
+  (rationale in §12).
+
+## 14. Implementation plan (post-review)
+
+**Phase 1 — base tier + observability:**
+
+1. `sysh` gateway: shell mode, ASCII argv, hardened matcher, permissive
+   mode, lockdown, result contract (stderr line + codes).
+2. Containment: NNP, systemd scopes, scrubbed env, rlimits, output caps.
+3. Sinks: journald events, fail-closed; `sysh audit tail`.
+4. Linter + `policy install` + `auth add` (fingerprint/key map,
+   `ExposeAuthInfo` reading).
+5. Packaging: deb, transactional postinst (user checks, sshd drop-in with
+   `sshd -t` + rollback, purge), auditd opt-in.
+6. `sysh doctor`: effective sshd config (`sshd -T -C`), ownership/modes,
+   lint, supplementary-group check, auditd rule presence.
+
+**Phase 2 — approve-executes:** request spool, `approvals`/`approve`
+(TTY, policy re-check, confirmation code, `systemd-run`), `sysh-result`,
+hash-chained root log, dedup/TTL/lockout.
+
+**Before any release:**
+
+- Tests: option injection through every wildcard position; symlink and
+  race attempts in every `sy`-writable path; terminal-escape argv; policy
+  TOCTOU; sshd drop-in rollback on a bad config; NNP under a hostile
+  setuid; cgroup-kill on forked children.
+- Independent review of the **sshd drop-in, package scripts, and auditd
+  rules** — not just the Go code; that is where lockout and privilege
+  mistakes live.
