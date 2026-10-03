@@ -55,6 +55,12 @@ after the base is reviewed in production.
 
 ## 3. Architecture
 
+**Implementation language: Go.** Chosen deliberately: a statically linked
+single binary with no runtime dependencies on servers; the RE2 regexp
+engine (linear-time, no backtracking) that the pattern grammar of §6.2
+requires; direct `prctl`/syscall control for `PR_SET_NO_NEW_PRIVS` and
+`PR_SET_DUMPABLE`; and trivial cross-compilation for deb packaging.
+
 One static Go binary on the server, behaving by role:
 
 ```
