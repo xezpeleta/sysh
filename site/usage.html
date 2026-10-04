@@ -152,6 +152,63 @@ authenticator detected</span>
 agent cannot fake that screen, which is exactly why the approval
 gesture lives here and not in agent tool space.</p>
 
+<div class="callout" id="solitaire">
+<h3>But wait — why can&rsquo;t the agent just run <code>sy approve</code> itself?</h3>
+<p>A fair first reaction, and the design&rsquo;s load-bearing wall. The
+server never trusts anything on the laptop: it accepts only signatures
+from <strong>registered approver keys</strong>, verified root-side. So
+the question collapses to one thing — can any process produce that
+signature? Three walls stand between the agent and the pen:</p>
+<ol>
+<li><strong>The hardware gesture.</strong> With an <code>sk-*</code> approver
+key on a FIDO2 token (YubiKey), every signature requires the token&rsquo;s
+PIN <em>and a physical touch</em>, inside <code>ssh-keygen</code>. The
+key material never leaves the token — export is not a thing. An agent
+running wild on your laptop can invoke the whole ceremony a thousand
+times, drive synthetic TTYs, whatever: without a human finger on the
+token, <strong>no signature exists</strong>. The touch is the only input
+no process can synthesize.</li>
+<li><strong>User separation (deployment requirement DR1).</strong> The
+agent harness runs as a dedicated OS user holding only agent keys —
+never your root SSH keys, never your <code>ssh-agent</code>, never
+<code>ControlMaster</code>. It cannot even <em>launch</em> the ceremony
+with your credentials: to it, your approver key and root channel are
+unreadable. (This is also why the root SSH channel — the real trust
+root on the laptop — must carry a gesture of its own: passphrase not
+auto-loaded, or <code>ssh-add -c</code> confirmation per use.)</li>
+<li><strong>The honest edge, named.</strong> Same-user malware can still
+<em>drive</em> a ceremony and fake what you read (a phishing variant:
+screen says <em>reload</em>, bytes say <em>reboot</em>). The touch proves
+a human acted; it cannot prove what the human saw. That is why you
+type <code>sy approve</code> yourself in your own terminal, why the argv
+box comes from the server over your channel, why you re-type the
+pattern argument by hand, and why the root-side journal records what
+was <em>actually</em> signed — detection, always.</li>
+</ol>
+</div>
+
+<h2 id="token">The hardware token is the workflow</h2>
+<p>Everything above assumes one small object in your USB port. The
+integration is deliberately boring — stock OpenSSH, no drivers, no
+proprietary daemon:</p>
+<pre><code><span class="p">$</span> ssh-keygen -t ed25519-sk -f ~/.config/sy/keys/approver-sk -N ""
+<span class="out">You will need to enter the token PIN, then touch the token…
+Your identification has been saved in .approver-sk</span></pre>
+<p>What lives on disk is only a <em>key handle</em> — a reference to a
+key sealed inside the token&rsquo;s secure element. Register it once,
+root-side, like any approver:</p>
+<pre><code>root@server# sysh approver add ops-yubi
+<span class="out">paste one public key line, then Ctrl-D
+registered approver ops-yubi (sk-ssh-ed25519@openssh.com)</span></pre>
+<p>From then on, the token participates exactly twice per approval:
+<code>ssh-keygen</code> asks the FIDO2 PIN (three bad tries lock the
+token&rsquo;s sysh use until replug; eight wipe it — brute force is not
+on the menu), and the token blinks for a touch. No PIN prompt and no
+touch anywhere in the agent&rsquo;s tree, ever — <code>sy approve</code>
+runs in <em>your</em> terminal, as <em>you</em>. Lose the token and the
+approver simply stops signing; remove it root-side and the ceremony
+reverts to interactive <code>ssh -t</code> from a root session.</p>
+
 <h2 id="privileged"><span class="step">STEP 6</span>Root verbs: privileged rules</h2>
 <p>For work that needs root, the operator pre-authorizes <em>exact</em>
 argvs. Install generates a root-owned sudoers fragment limited to those

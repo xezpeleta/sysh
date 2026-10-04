@@ -507,3 +507,23 @@ ul.plain strong { color: var(--text); }
 @media (prefers-reduced-motion: reduce) {
   .wd-table tr.wd-new td, .wd-b-request, .wd-caret { animation: none; }
 }
+
+/* ---------- callout (usage: anti-solitaire note) ---------- */
+.callout {
+  border: 1px solid #b8963e;
+  border-left: 3px solid #b8963e;
+  border-radius: 8px;
+  background: #f8ecc9;
+  padding: 14px 18px;
+  margin: 1.6rem 0;
+}
+.callout h3 {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  font-family: var(--serif);
+}
+.callout h3 code { font-size: 13px; }
+.callout ol { margin: 8px 0 2px 0; padding-left: 20px; }
+.callout li { margin-bottom: 8px; }
+.callout li:last-child { margin-bottom: 0; }
+.callout p { margin: 0; }
