@@ -640,3 +640,14 @@ ul.plain strong { color: var(--text); }
   color: var(--ink, #1f1f1f);
 }
 .cfeat p { font-size: 13.5px; line-height: 1.55; margin: 0; }
+
+.demo-cap {
+  max-width: 46rem;
+  margin: 0.7rem auto 0;
+  padding: 0 1.5rem;
+  text-align: center;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 12.5px;
+  color: var(--muted);
+}
