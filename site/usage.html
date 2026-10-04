@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Usage — sysh</title>
-<meta name="description" content="Installing sysh, writing a policy, adding an agent key, privileged rules, profiles, and reading the record.">
+<meta name="description" content="Installing sysh, writing a policy, adding an agent key, approval-gated root, privileged rules, profiles, and reading the record.">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27><rect x=%270.8%27 y=%270.6%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%237ec88c%27/><rect x=%278.4%27 y=%275%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%2396b6dd%27/><rect x=%271.6%27 y=%279.4%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%23f0cf8e%27/></svg>"><rect width='16' height='16' rx='3' fill='%23e6e4df'/><path d='M4 5l3.5 3L4 11' stroke='%235b8def' stroke-width='1.7' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M9 11h3.5' stroke='%235b8def' stroke-width='1.7' stroke-linecap='round'/></svg>">
 </head>
@@ -78,11 +78,40 @@ SSH:</p>
 <span class="p">$</span> ssh -i agent.key sy@server '/usr/bin/sudo -n id'
 <span class="out">{"sysh":1,"class":"denied","detail":"denied by deny rule","exit":125}</span></code></pre>
 <p>Exit codes: <code>2</code> lockdown, <code>3</code> malformed input,
-<code>124</code> timeout, <code>125</code> denied or internal error. Each
+<code>124</code> timeout, <code>125</code> denied or internal error,
+<code>30</code> approval required, <code>31</code> result unavailable. Each
 exec gets a systemd scope with resource caps; output above the cap trips and
 is recorded.</p>
 
-<h2 id="privileged"><span class="step">STEP 5</span>Root verbs: privileged rules</h2>
+<h2 id="approval"><span class="step">STEP 5</span>Root on request: approval rules</h2>
+<p>Between &ldquo;never root&rdquo; and &ldquo;pre-authorized root&rdquo;
+there is a middle: the agent can <em>ask</em>. A rule with
+<code>approval = true</code> grants nothing standing — each execution waits
+for a human:</p>
+<pre><code>[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "[a-z0-9@._\-]+"]
+path  = "/usr/bin/systemctl"
+privileged = true
+approval = true       <span class="c"># root, but only per-exec, human-gated</span>
+timeout = 60</code></pre>
+<p>At runtime the agent's call exits <code>30</code> with a request id and
+executes nothing. You answer from any root SSH session:</p>
+<pre><code><span class="p">$</span> ssh -t root@server 'sysh approvals'
+<span class="out">req_9b3c1d5e7a42  age=3s  key=sy/server.example
+  argv=["/usr/bin/systemctl","restart","mariadb"]</span>
+<span class="p">$</span> ssh -t root@server 'sysh approve req_9b3c1d5e7a42'
+<span class="out">  execute as root? [yes/no] type argument 2 exactly as shown (mariadb):
+executed: exit=0 in 213ms</span></code></pre>
+<p>The approver re-reads the argv on screen and types any pattern-chosen
+argument by hand; a mismatch aborts and the request stays pending. The agent
+then fetches the outcome read-only — <code>sysh-result req_&hellip;</code>,
+exit <code>31</code> while pending, expired, or never approved. The journal
+holds both halves: <code>request</code> events from the agent's side,
+<code>approve</code> events from root's (<code>_UID=0</code>). Requests
+expire after 10 minutes, results after an hour; there is nothing to
+revoke because nothing was ever granted.</p>
+
+<h2 id="privileged"><span class="step">STEP 6</span>Root verbs: privileged rules</h2>
 <p>For work that needs root, the operator pre-authorizes <em>exact</em>
 argvs. Install generates a root-owned sudoers fragment limited to those
 argvs — nothing else:</p>
@@ -112,9 +141,12 @@ setfacl -d -m u:sy:r /var/log/apache2      <span class="c"># survive logrotate</
 [[rule]]  argv = ["/usr/bin/tail", "-n", "[0-9]+", "/var/log/apache2/error.log"]
 [[rule]]  argv = ["/usr/sbin/apache2ctl", "configtest"]   <span class="c"># privileged</span>
 [[rule]]  argv = ["/usr/bin/tee", "/etc/apache2/ports.conf"]  <span class="c"># privileged</span>
-[[rule]]  argv = ["/usr/bin/systemctl", "reload", "apache2"]  <span class="c"># privileged</span></code></pre>
+[[rule]]  argv = ["/usr/bin/systemctl", "reload", "apache2"]  <span class="c"># privileged</span>
+[[rule]]  argv = ["/usr/bin/systemctl", "restart", "[a-z0-9@._\-]+"]  <span class="c"># approval-gated</span></code></pre>
 <p>The agent then maintains that server — config content on stdin through
-<code>tee</code>, validate, reload — and nothing else.</p>
+<code>tee</code>, validate, reload — and nothing else. A full restart drops
+live connections, so it goes through the approval channel: the agent can
+only request it, a human answers.</p>
 
 <h2 id="record">Reading the record</h2>
 <pre><code><span class="p">$</span> journalctl -t sysh --since today    <span class="c"># every exec attempt, both phases</span>

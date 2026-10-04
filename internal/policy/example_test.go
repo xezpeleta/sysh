@@ -130,6 +130,12 @@ func TestWebserverExampleIsValid(t *testing.T) {
 			t.Errorf("webserver example denied %v", argv)
 		}
 	}
+	// the apache restart is approval-gated: it must still match (the
+	// gateway turns it into a request, exit 30 — never a silent denial
+	// and never a standing grant)
+	if d := c.Match([]string{"/usr/bin/systemctl", "restart", "apache2"}); !d.Allowed || d.Rule == nil || !d.Rule.Approval || !d.Rule.Privileged {
+		t.Errorf("webserver example restart must be privileged+approval-gated, got %+v", d)
+	}
 	denied := [][]string{
 		{"/usr/bin/sudo", "-n", "id"},
 		{"/bin/su"},

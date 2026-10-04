@@ -4,7 +4,9 @@
 package policy
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -35,11 +37,21 @@ type Rule struct {
 	Ack        bool     `toml:"ack"`      // acknowledges linter warnings on this rule
 }
 
-// Parse decodes and structurally validates policy bytes.
+// Parse decodes and structurally validates policy bytes. Unknown TOML
+// fields are refused: a typo ("aprovval", "timeouts") must never read
+// as a policy that quietly lacks the property the operator meant to set.
 func Parse(data []byte) (*Policy, error) {
 	var p Policy
-	if err := toml.Unmarshal(data, &p); err != nil {
+	md, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&p)
+	if err != nil {
 		return nil, fmt.Errorf("policy: TOML parse error: %w", err)
+	}
+	if unknown := md.Undecoded(); len(unknown) > 0 {
+		parts := make([]string, len(unknown))
+		for i, k := range unknown {
+			parts[i] = k.String()
+		}
+		return nil, fmt.Errorf("policy: unknown field(s): %s — typos are policy, refused", strings.Join(parts, ", "))
 	}
 	if p.Version != 2 {
 		return nil, fmt.Errorf("policy: version must be 2, got %d", p.Version)

@@ -124,7 +124,7 @@ privileged = true
 ack = true
 timeout = 30
 
-# apply
+# apply — the routine loop is pre-authorized (way 3): validate, reload
 [[rule]]
 argv = ["/usr/bin/systemctl", "reload", "apache2"]
 path = "/usr/bin/systemctl"
@@ -132,11 +132,16 @@ privileged = true
 ack = true
 timeout = 60
 
+# apache restart drops live connections — the disruptive verb goes
+# through the approval channel instead (way 2): the agent's request
+# waits (exit 30) until a human answers `sysh approve` from a root SSH
+# session, typing the pattern-chosen unit name by hand. No standing
+# sudoers grant exists for this rule.
 [[rule]]
-argv = ["/usr/bin/systemctl", "restart", "apache2"]
+argv = ["/usr/bin/systemctl", "restart", "[a-z0-9@._][a-z0-9@._\\-]*"]
 path = "/usr/bin/systemctl"
 privileged = true
-ack = true
+approval = true
 timeout = 60
 
 # fail2ban: local overrides and restart

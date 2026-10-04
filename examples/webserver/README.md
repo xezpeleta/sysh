@@ -7,7 +7,9 @@ for a typical Debian/Ubuntu web server. The agent ends up able to:
   apache/fail2ban logs;
 - **customize Apache**: read the whole config tree, write the enumerated
   config files (content on stdin through `tee`), validate with
-  `apache2ctl configtest`, reload/restart the service;
+  `apache2ctl configtest`, reload the service; a full **restart is
+  approval-gated** — the agent can only request it (exit 30) and a
+  human answers `sysh approve` from any root SSH session;
 - **customize fail2ban**: write `/etc/fail2ban/jail.local`, restart it;
 - **nothing else** — `sudo`, `su`, and every unlisted argv are denied.
 
@@ -73,11 +75,19 @@ $ ssh -i agent.key sy@web01.example.net \
   Keep `doctor` and the journal in your routine.
 - **NNP is off on this host** while privileged rules exist (PROJECT.md
   §6.8): the exact-argv sudo grants are the only elevation surface.
-- **Patterns are fine in unprivileged rules** (anchored, per-position),
-  **never in privileged ones** — sudoers grants are exact argv, so root
-  verbs are enumerated file by file.
+- **Patterns are fine in unprivileged rules** (anchored, per-position)
+  and **in approval rules** (the human re-checks what matched and types
+  the pattern-chosen values at `sysh approve`) — but never in
+  pre-authorized privileged ones: sudoers grants are exact argv, so
+  root verbs are enumerated file by file.
 - Restart verbs carry `TIMEOUT=` in the generated grant: a wedged
   restart dies at the deadline, and sudo (not the agent) kills it.
+  Approval-gated verbs carry the same bound on the root-side execution.
+- **Approval-gated restart (apache2) generates no sudoers grant at all**:
+  while the request waits, root simply cannot be reached through this
+  argv; after a human answers, the one execution runs in a root-side
+  systemd scope — and both halves land in the journal (`request` at
+  `_UID=999`, `approve` at `_UID=0`).
 
 ## Verify it
 

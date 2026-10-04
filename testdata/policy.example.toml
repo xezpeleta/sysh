@@ -95,3 +95,18 @@ deny = true                  # user-unit persistence
 # privileged = true
 # ack = true
 # timeout = 30
+
+# --- approval rules (phase 2): root, but only after a human answers a
+# per-exec request. The gateway drops the request (exit 30); the
+# operator sees the exact argv with `sysh approvals` and runs
+# `sysh approve <id>` — typing any pattern-chosen argument by hand —
+# from any root SSH session; the agent fetches the outcome read-only
+# with `sysh-result <id>` (exit 31 while pending/absent). No standing
+# sudoers grant exists for these; patterns are allowed because the
+# human re-checks what matched.
+# [[rule]]
+# argv = ["/usr/bin/systemctl", "restart", "[a-z0-9@._][a-z0-9@._\\-]*"]
+# path = "/usr/bin/systemctl"
+# privileged = true
+# approval = true
+# timeout = 30

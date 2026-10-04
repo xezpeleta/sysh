@@ -262,10 +262,20 @@ path = "/usr/bin/x"`, // empty argv
 [[rule]]
 argv = ["/x"]
 timeout = 99999`, // out of range
+		`version = 2
+mode = "enforcing"
+nope = true`, // unknown top-level field
+		`version = 2
+[[rule]]
+argv = ["/x"]
+path = "/usr/bin/x"
+aproval = true`, // unknown rule field (typo of approval)
 	}
 	for _, doc := range bad {
 		if _, err := Parse([]byte(doc)); err == nil {
 			t.Errorf("Parse accepted invalid policy:\n%s", doc)
+		} else if !strings.Contains(err.Error(), "unknown field") && strings.Contains(doc, "nope") {
+			t.Errorf("Parse error should name the unknown field: %v", err)
 		}
 	}
 }
