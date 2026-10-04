@@ -3,6 +3,10 @@
 **A login shell for unattended AI agents on servers — privilege control
 and accountability, enforced on the server itself.**
 
+Pronunciation: "sish" — SY-sh(ell). Sounds like the islands; works
+like a shell. The agents do the work, the operators do the approving —
+ideally from a beach.
+
 It exists for sysadmin work you let an agent do *alone*: `sysh` bounds
 what the agent may do, and records what it actually did. It does not
 promise perfect bounds — an allowed command is still a real command —

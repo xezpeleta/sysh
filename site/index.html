@@ -7,10 +7,8 @@
 <meta name="description" content="sysh makes the agent's SSH login the control point: privilege control and accountability for unattended AI agents on sysadmin tasks, enforced on the server itself.">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="pi-replay.css">
-<link rel="stylesheet" href="term-replay.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%231f1f1f'/><text x='2.2' y='11.5' font-family='monospace' font-size='9' font-weight='bold' fill='%237ec88c'>S</text><text x='7.6' y='11.5' font-family='monospace' font-size='9' font-weight='bold' fill='%2396b6dd'>Y</text><rect x='12.4' y='4' width='2.1' height='7.5' fill='%23f0cf8e'/></svg>"><rect x=%270.8%27 y=%270.6%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%237ec88c%27/><rect x=%278.4%27 y=%275%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%2396b6dd%27/><rect x=%271.6%27 y=%279.4%27 width=%276%27 height=%276%27 rx=%271.4%27 fill=%27%23f0cf8e%27/></svg>"><rect width='16' height='16' rx='3' fill='%23e6e4df'/><path d='M4 5l3.5 3L4 11' stroke='%235b8def' stroke-width='1.7' fill='none' stroke-linecap='round' stroke-linejoin='round'/><path d='M9 11h3.5' stroke='%235b8def' stroke-width='1.7' stroke-linecap='round'/></svg>">
 <script src="pi-replay.js" defer></script>
-<script src="term-replay.js" defer></script>
 </head>
 <body>
 
@@ -90,50 +88,6 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
   <figcaption>an emulated agent session — allowed where the policy allows, refused where it doesn't</figcaption>
 </figure>
 
-<p class="demo-intro">
-  <strong>No agent required.</strong> sysh is not a harness — it is a login
-  shell, so anything that speaks SSH gets the same treatment: your scripts,
-  your CI job, a junior admin on a laptop. Below, the same host driven by
-  nothing but <code>ssh</code> — same bounds, same refusals — plus the part
-  that needs no policy at all: a root command the agent can only
-  <em>ask</em> for, and a human who answers. The last command is you, on
-  the server, reading the record this channel cannot touch.
-</p>
-<figure class="term-replay" data-term-replay="term-demo.json">
-  <pre class="term-replay__fallback">$ ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'
-  13:04:01 up 41 days,  1 user,  load average: 0.14, 0.18, 0.09   ✓ allowed
-
-$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'
-  {"sysh":1,"class":"denied","detail":"no rule allows this argv","exit":125}   ✗ denied by policy
-
-# the operator later grants exactly this — as a per-exec approval:
-$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'
-  {"sysh":1,"class":"approval_required",...,"exit":30,"request_id":"req_9b3c1d5e7a42"}   ? operator approval required
-
-# a human answers, from anywhere root SSH reaches:
-$ ssh -t root@web01.example.net 'sysh approve req_9b3c1d5e7a42'
-  request req_9b3c1d5e7a42
-    key:    sy/web01.example.net (claimed)
-    argv:   ["/usr/bin/systemctl","restart","mariadb"]
-    rule:   4, timeout 30s
-  execute as root? [yes/no] type argument 2 exactly as shown (mariadb):
-  executed: exit=0 in 213ms; the agent fetches the outcome with: sysh-result req_9b3c1d5e7a42
-
-$ ssh -i agent.key sy@web01.example.net 'sysh-result req_9b3c1d5e7a42'
-  {"sysh":1,"class":"result","key_id":"sy/web01.example.net","exit":0,...}   ✓ read-only fetch
-
-$ cat security.conf.new | ssh -i agent.key sy@web01.example.net \
-    '/usr/bin/tee /etc/apache2/conf-available/security.conf'
-  {"sysh":1,"class":"exec","PRIV":true,"exit":0}   ✓ pre-authorized root verb
-
-# on the server — the record this channel cannot forge or erase:
-$ journalctl -t sysh -o verbose | grep -E '_UID|KEYID|ARGV|PRIV|DECISION'
-    _UID=999  KEYID=sy/web01.example.net
-    ARGV=["/usr/bin/systemctl","restart","mariadb"]  DECISION=request  PRIV=true
-    _UID=0  DECISION=approve  EXIT=0
-    ARGV=["/usr/bin/systemctl","reload","apache2"]  PRIV=true</pre>
-  <figcaption>also emulated — plain ssh, no AI anywhere, same bounds and same record</figcaption>
-</figure>
 
 <main class="wrap">
 
@@ -328,6 +282,8 @@ $ journalctl -t sysh -o verbose | grep -E '_UID|KEYID|ARGV|PRIV|DECISION'
 
 <footer class="footer">
   <span class="fin">bounds you set, and a record you can trust.</span>
+  <span class="fin fin-egg">SY-sh(ell) &mdash; pronounced like the islands.
+  Agents do the work; operators do the approving. Ideally from a beach.</span>
   <a href="https://github.com/xezpeleta/sysh">xezpeleta/sysh</a> ·
   <a href="https://github.com/xezpeleta/sysh/blob/main/README.md">README</a> ·
   <a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">PROJECT.md</a> ·
