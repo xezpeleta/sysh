@@ -68,7 +68,15 @@ policy does not install: the failure direction is safe.</p>
 The key's comment becomes its identity in every event:</p>
 <pre><code><span class="p">$</span> ssh-keygen -t ed25519 -f agent.key -C sy/server.example
 <span class="p">$</span> sysh auth add &lt; agent.key.pub    <span class="c"># forced options: no PTY,</span>
-                                   <span class="c"># no forwarding, sysh as the shell</span></code></pre>
+                                   <span class="c"># no forwarding, sysh as the shell</span>
+<span class="p">$</span> sysh auth add --ttl 7d &lt; agent.key.pub   <span class="c"># or with an expiry the</span>
+                                   <span class="c"># gateway itself enforces</span></code></pre>
+<p>Keys are low-value by design: a stolen one reaches only the policy&rsquo;s
+argv surface, journaled. An expired key is refused like any other deny;
+<code>sysh auth rotate &lt;key-id&gt;</code> swaps in a fresh key without a
+lockout window, and <code>sysh doctor</code> warns when one is about to
+lapse. No certificate authority — the TTL is a date in the root-owned
+<code>keys.map</code>, checked on the host before anything runs.</p>
 
 <h2 id="run"><span class="step">STEP 4</span>Use it</h2>
 <p>From then on the agent — or you — connects as <code>sy</code> over plain

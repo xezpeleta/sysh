@@ -3,6 +3,7 @@ package gateway
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -12,9 +13,10 @@ import (
 // sshd's ExposeAuthInfo file, read first thing in the gateway before
 // any child could tamper with it. Identity is never agent-claimed.
 type Identity struct {
-	Fingerprint string // "SHA256:…" or "unknown"
-	KeyID       string // keys.map label, "unmapped", or "unknown"
-	Source      string // $SSH_USER_AUTH path or "none"
+	Fingerprint string    // "SHA256:…" or "unknown"
+	KeyID       string    // keys.map label, "unmapped", or "unknown"
+	Source      string    // $SSH_USER_AUTH path or "none"
+	Expires     time.Time // optional keys.map expiry; zero = no TTL
 }
 
 // ReadIdentity reads $SSH_USER_AUTH and maps the fingerprint to a key
@@ -54,22 +56,42 @@ func ReadIdentity(getenv func(string) string, readFile func(string) ([]byte, err
 	}
 	id.KeyID = "unmapped"
 
-	// keys.map: lines of "SHA256:… key-id" (root-owned, 0644).
+	// keys.map: lines of "SHA256:… key-id [expires:RFC3339]"
+	// (root-owned, 0644). The optional expiry is enforced by the
+	// gateway (Run), not by sshd — TTL without a certificate authority.
 	km, err := readFile(keysMapPath)
 	if err != nil || len(km) > 65536 {
 		return id
 	}
 	for _, line := range strings.Split(string(km), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == id.Fingerprint {
+		if len(fields) >= 2 && fields[0] == id.Fingerprint {
 			id.KeyID = fields[1]
+			if exp, err := parseExpiry(fields); err == nil {
+				id.Expires = exp
+			}
 			break
 		}
 	}
 	return id
 }
 
+// parseExpiry reads the optional "expires:RFC3339" third field of a
+// keys.map line. A malformed expiry is ignored here (it cannot widen
+// access) and flagged by doctor.
+func parseExpiry(fields []string) (time.Time, error) {
+	if len(fields) < 3 {
+		return time.Time{}, nil
+	}
+	v := strings.TrimPrefix(fields[2], "expires:")
+	if v == fields[2] { // no expires: prefix — not an expiry field
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, v)
+}
+
 // ParseKeysMap parses a keys.map buffer (fingerprint → key id).
+// Lines may carry an optional "expires:RFC3339" third field.
 func ParseKeysMap(data []byte) (map[string]string, error) {
 	m := make(map[string]string)
 	for _, line := range strings.Split(string(data), "\n") {
@@ -78,6 +100,11 @@ func ParseKeysMap(data []byte) (map[string]string, error) {
 		case 0:
 			continue
 		case 2:
+			m[fields[0]] = fields[1]
+		case 3:
+			if _, err := parseExpiry(fields); err != nil {
+				return nil, fmt.Errorf("keys.map: bad expiry on line %q: %v", line, err)
+			}
 			m[fields[0]] = fields[1]
 		default:
 			return nil, fmt.Errorf("keys.map: bad line %q", line)

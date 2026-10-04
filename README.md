@@ -174,7 +174,7 @@ root@server:~# apt install sysh            # creates the 'sy' user, dirs,
 
 # operator, from their laptop, over plain SSH:
 $ ssh-keygen -t ed25519 -f ~/.config/sysh/keys/server.example -C sysh-agent/server.example
-$ ssh root@server.example 'sysh auth add' <<< 'restrict ssh-ed25519 AAAA… sysh-agent/server.example'
+$ ssh root@server.example 'sysh auth add --ttl 30d' <<< 'restrict ssh-ed25519 AAAA… sysh-agent/server.example'
 $ ssh root@server.example 'sysh policy install' < server.example.toml
 
 # anyone the policy allows (human or agent):
@@ -247,6 +247,22 @@ as a different OS user than your root SSH keys; FIDO2 hardware keys
 recommended for root) — and command output flowing to an LLM agent is
 externally observable by its provider, which the docs say out loud.
 
+### Agent key hygiene
+
+Agent keys are **low-value by design**: a stolen key reaches only the
+policy's argv surface, unprivileged, journaled. On top of that:
+
+- `sysh auth add --ttl 7d` records an expiry in the root-owned
+  `keys.map`; the gateway refuses the expired key like any other deny
+  — enforced on the host, no certificate authority to run or protect.
+- `sysh auth rotate <key-id>` installs a new key (stdin) and removes
+  the old one — add first, remove second, never locked out.
+- `sysh doctor` warns about keys that are expired or expiring within
+  a week.
+- For recurring engagements, one key per engagement
+  (`sysh-agent/web01-2025-06-12`) gives per-engagement attribution in
+  the journal for free: every event carries the key id.
+
 ## Status
 
 **Phase 1 implemented.** The specification in [PROJECT.md](PROJECT.md)
@@ -273,7 +289,9 @@ its §13). What exists today, in this repo:
   a `sysh audit tail` viewer. auditd rules for the agent UID ship in the
   deb and install automatically when auditd is present.
 - **Control plane (§4.3):** `sysh auth add/list/remove` (restrict-only
-  keys, fingerprint-bound ids), `sysh policy install/lint` (mandatory
+  keys, fingerprint-bound ids, optional `--ttl` expiry enforced by the
+  gateway — TTL with no certificate authority), `sysh auth rotate`
+  (register the new key, then drop the old one), `sysh policy install/lint` (mandatory
   linter: denylist on realpath+basename, pattern safety, path ownership
   checks, warning class with per-rule `ack`, permissive-mode auditd
   gate), `sysh doctor` (~20 effective-configuration checks), `sysh

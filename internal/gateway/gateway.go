@@ -121,6 +121,16 @@ func Run(cfg Config, cmd string) int {
 			result.ExitDenied, audit.Event{Decision: audit.DecisionInternal, Detail: err.Error()})
 	}
 
+	// Key expiry (§5): keys.map may carry an "expires:" date for the
+	// invoking key — TTL enforced by the gateway, on the host, with no
+	// certificate authority to protect elsewhere. An expired key is
+	// refused like any other deny, with the same journal record.
+	if !ident.Expires.IsZero() && !cfg.Now().Before(ident.Expires) {
+		detail := "key " + ident.KeyID + " expired on " + ident.Expires.UTC().Format(time.RFC3339) + " (rotate: sysh auth rotate)"
+		return deny(result.ClassDenied, detail, result.ExitDenied,
+			audit.Event{Decision: audit.DecisionDeny, Detail: "key expired"})
+	}
+
 	// argv is the unit of trust (§6.1).
 	argv, err := SplitCommand(cmd)
 	if err != nil {

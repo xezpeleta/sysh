@@ -85,9 +85,11 @@ func usage() {
 
 usage:
   sysh -c '<command>'              login-shell mode (agent channel, user sy)
-  sysh auth add                    register an agent key (stdin: authorized_keys line)
+  sysh auth add [--ttl 7d]         register an agent key (stdin: authorized_keys line)
   sysh auth list
   sysh auth remove <key-id>
+  sysh auth rotate <key-id> [--ttl 7d]
+                                  register a new key (stdin), then remove the old one
   sysh policy install [file]       lint + install a policy (default: stdin)
   sysh policy lint [file]
   sysh audit tail [-f]             local view of sysh events

@@ -729,3 +729,150 @@ func TestSubsystemSFTP(t *testing.T) {
 		t.Fatalf("no subsystem: %q", got)
 	}
 }
+
+// ---- auth TTL / rotation -------------------------------------------------
+
+func freezeNow(t *testing.T, at time.Time) {
+	t.Helper()
+	saved := nowFn
+	nowFn = func() time.Time { return at }
+	t.Cleanup(func() { nowFn = saved })
+}
+
+func TestAuthAddTTL(t *testing.T) {
+	newTestEnv(t)
+	freezeNow(t, time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC))
+
+	line, fp := genKeyLine(t, "restrict", "agent/ttl")
+	setStdin(line)
+	if rc := cmdAuth([]string{"add", "--ttl", "7d"}); rc != 0 {
+		t.Fatalf("add --ttl 7d rc = %d", rc)
+	}
+	want := fp + " agent/ttl expires:2025-06-08T12:00:00Z\n"
+	if got := readFile(t, keysMapPath); got != want {
+		t.Fatalf("keys.map = %q, want %q", got, want)
+	}
+	// authorized_keys never carries the expiry — only keys.map does
+	if strings.Contains(readFile(t, authKeysPath), "expires") {
+		t.Fatal("expiry leaked into authorized_keys")
+	}
+
+	// bad TTL values are refused before anything is written
+	for _, bad := range []string{"7x", "-1h", "0s", "abc"} {
+		if rc := cmdAuth([]string{"add", "--ttl", bad}); rc != 64 {
+			t.Fatalf("ttl %q: rc = %d, want 64", bad, rc)
+		}
+	}
+	// --ttl without a value
+	if rc := cmdAuth([]string{"add", "--ttl"}); rc != 64 {
+		t.Fatalf("bare --ttl rc = %d, want 64", rc)
+	}
+	if strings.Contains(readFile(t, authKeysPath), "expires") {
+		t.Fatal("refused add must not have written anything")
+	}
+}
+
+func TestAuthListShowsExpiry(t *testing.T) {
+	newTestEnv(t)
+	freezeNow(t, time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC))
+
+	line, fp := genKeyLine(t, "restrict", "agent/one")
+	setStdin(line)
+	if rc := cmdAuth([]string{"add"}); rc != 0 {
+		t.Fatalf("add rc = %d", rc)
+	}
+	line2, fp2 := genKeyLine(t, "restrict", "agent/two")
+	setStdin(line2)
+	if rc := cmdAuth([]string{"add", "--ttl", "48h"}); rc != 0 {
+		t.Fatalf("add --ttl rc = %d", rc)
+	}
+
+	// expired entry (hand-written past date)
+	_ = fp2
+	if err := os.WriteFile(keysMapPath, []byte(fp+" agent/one\n"+fp2+" agent/two expires:2025-05-01T00:00:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// list must not fail and must surface both states
+	stdoutSaved := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	rc := cmdAuth([]string{"list"})
+	w.Close()
+	out, _ := io.ReadAll(r)
+	os.Stdout = stdoutSaved
+	if rc != 0 {
+		t.Fatalf("list rc = %d", rc)
+	}
+	if !strings.Contains(string(out), "agent/one") || !strings.Contains(string(out), "EXPIRED 2025-05-01") {
+		t.Fatalf("list output: %s", out)
+	}
+}
+
+func TestAuthRotate(t *testing.T) {
+	newTestEnv(t)
+	freezeNow(t, time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC))
+
+	oldLine, _ := genKeyLine(t, "restrict", "agent/old")
+	setStdin(oldLine)
+	if rc := cmdAuth([]string{"add", "--ttl", "7d"}); rc != 0 {
+		t.Fatalf("old add rc = %d", rc)
+	}
+
+	// rotate with the same key material: refused, nothing changes
+	setStdin(oldLine)
+	if rc := cmdAuth([]string{"rotate", "agent/old"}); rc != 1 {
+		t.Fatalf("same-key rotate rc = %d, want 1", rc)
+	}
+	if n := strings.Count(readFile(t, authKeysPath), "\n"); n != 1 {
+		t.Fatalf("authorized_keys lines = %d, want 1", n)
+	}
+
+	// rotate with fresh material and a TTL: new in, old out
+	newLine, newFP := genKeyLine(t, "restrict", "agent/new")
+	setStdin(newLine)
+	if rc := cmdAuth([]string{"rotate", "agent/old", "--ttl", "30d"}); rc != 0 {
+		t.Fatalf("rotate rc = %d", rc)
+	}
+	// authorized_keys holds key material only (ids live in keys.map)
+	newB64 := strings.Fields(newLine)[2]
+	oldB64 := strings.Fields(oldLine)[2]
+	ak := readFile(t, authKeysPath)
+	if strings.Contains(ak, oldB64) || !strings.Contains(ak, newB64) {
+		t.Fatalf("authorized_keys after rotate: %q", ak)
+	}
+	km := readFile(t, keysMapPath)
+	if !strings.Contains(km, newFP+" agent/new expires:2025-07-01T12:00:00Z") {
+		t.Fatalf("keys.map after rotate: %q", km)
+	}
+	if strings.Contains(km, "agent/old") {
+		t.Fatalf("old entry survived rotation: %q", km)
+	}
+
+	// rotate of an unknown id: refused
+	setStdin(newLine)
+	if rc := cmdAuth([]string{"rotate", "ghost"}); rc != 1 {
+		t.Fatalf("unknown rotate rc = %d, want 1", rc)
+	}
+}
+
+// remove must preserve the expiry field of the entries it keeps
+func TestAuthRemovePreservesExpiry(t *testing.T) {
+	newTestEnv(t)
+	lineA, fpA := genKeyLine(t, "restrict", "agent/keep")
+	setStdin(lineA)
+	if rc := cmdAuth([]string{"add", "--ttl", "7d"}); rc != 0 {
+		t.Fatalf("add A rc = %d", rc)
+	}
+	lineB, _ := genKeyLine(t, "restrict", "agent/drop")
+	setStdin(lineB)
+	if rc := cmdAuth([]string{"add"}); rc != 0 {
+		t.Fatalf("add B rc = %d", rc)
+	}
+	if rc := cmdAuth([]string{"remove", "agent/drop"}); rc != 0 {
+		t.Fatalf("remove rc = %d", rc)
+	}
+	km := readFile(t, keysMapPath)
+	if !strings.Contains(km, "expires:") || !strings.Contains(km, fpA+" agent/keep") {
+		t.Fatalf("expiry not preserved on remove: %q", km)
+	}
+}

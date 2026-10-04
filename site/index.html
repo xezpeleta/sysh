@@ -240,7 +240,7 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
   <h2>The login shell is the control point</h2>
   <p class="section-lead">
     The agent logs in over plain SSH as an unprivileged system user whose
-    login shell does three things — on the server, before any command runs.
+    login shell does four things — on the server, before any command runs.
     Control lives there: not in the agent's harness, not in prompt
     instructions, not in a management plane. The agent cannot talk its way
     past a shell.
@@ -266,6 +266,14 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
       through operator-written <em>privileged rules</em>: pre-authorized
       exact-argv grants, or a per-exec approval a human answers by hand.
       Both are validated at install.</p>
+    </div>
+    <div class="card">
+      <h3>Expires its own keys</h3>
+      <p>Agent keys are low-value by design: a stolen one reaches only the
+      policy&rsquo;s argv surface, journaled. Give one a TTL and the shell
+      itself refuses it when it lapses — an expired key is denied like any
+      other argv — and revocation is one root-owned command. No certificate
+      authority, nothing extra to run or protect.</p>
     </div>
   </div>
 </section>

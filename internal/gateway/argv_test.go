@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -125,5 +126,47 @@ func TestReadIdentity(t *testing.T) {
 	id = ReadIdentity(getenv, readFile, keysMap)
 	if id.Fingerprint != "unknown" {
 		t.Fatalf("garbage authfile mishandled: %+v", id)
+	}
+}
+
+func TestReadIdentityExpiry(t *testing.T) {
+	line, fp := genKeyLine(t, "test-agent/ttl")
+
+	authFile := t.TempDir() + "/user_auth"
+	if err := writeTestFile(authFile, "publickey "+line+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(k string) string {
+		if k == "SSH_USER_AUTH" {
+			return authFile
+		}
+		return ""
+	}
+	readFile := func(p string) ([]byte, error) { return testReadFile(p) }
+
+	exp := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	keysMap := t.TempDir() + "/keys.map"
+	if err := writeTestFile(keysMap, fp+" test-agent/ttl expires:"+exp.Format(time.RFC3339)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	id := ReadIdentity(getenv, readFile, keysMap)
+	if id.KeyID != "test-agent/ttl" || !id.Expires.Equal(exp) {
+		t.Fatalf("expiry not read: %+v (want %v)", id, exp)
+	}
+
+	// malformed expiry is ignored (cannot widen access), id still maps
+	if err := writeTestFile(keysMap, fp+" test-agent/ttl expires:not-a-date\n"); err != nil {
+		t.Fatal(err)
+	}
+	id = ReadIdentity(getenv, readFile, keysMap)
+	if id.KeyID != "test-agent/ttl" || !id.Expires.IsZero() {
+		t.Fatalf("malformed expiry mishandled: %+v", id)
+	}
+
+	if _, err := ParseKeysMap([]byte(fp + " a expires:not-a-date\n")); err == nil {
+		t.Fatal("ParseKeysMap must reject a malformed expiry")
+	}
+	if m, err := ParseKeysMap([]byte(fp + " a expires:" + exp.Format(time.RFC3339) + "\n")); err != nil || m[fp] != "a" {
+		t.Fatalf("ParseKeysMap v2 line: %v %v", m, err)
 	}
 }

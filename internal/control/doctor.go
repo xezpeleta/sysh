@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/xezpeleta/sysh/internal/policy"
 )
@@ -122,6 +123,22 @@ func cmdDoctor(args []string) int {
 			fail("etc", fmt.Sprintf("%s: uid=%d mode=%o", e.path, statUIDCtl(fi), fi.Mode().Perm()))
 		default:
 			ok("etc", e.path)
+		}
+	}
+
+	// --- agent key expiries (keys.map TTLs; the gateway enforces them)
+	if km, err := readKeysMap(); err == nil {
+		for _, e := range km {
+			if e.Expires.IsZero() {
+				continue
+			}
+			left := e.Expires.Sub(nowFn())
+			switch {
+			case left <= 0:
+				warn("keys", e.ID+" expired "+e.Expires.UTC().Format("2006-01-02")+" — the gateway refuses it; rotate or remove")
+			case left < 7*24*time.Hour:
+				warn("keys", e.ID+" expires in "+left.Round(time.Hour).String()+" — rotate it (sysh auth rotate)")
+			}
 		}
 	}
 

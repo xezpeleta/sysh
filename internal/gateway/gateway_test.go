@@ -538,3 +538,58 @@ func lastJSONLine(s string) string {
 	}
 	return ""
 }
+
+// An expired keys.map TTL refuses everything the key tries — before
+// the policy is even consulted — with the standard deny exit, class,
+// and journal record. A future expiry (or none) must not interfere.
+func TestRunKeyExpired(t *testing.T) {
+	line, fp := genKeyLine(t, "test-agent/expired")
+
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "user_auth")
+	if err := os.WriteFile(authFile, []byte("publickey "+line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	build := func(expires string) (Config, *audit.Recorder, *bytes.Buffer) {
+		cfg, rec, _, stderr := testConfig(t, execPolicy)
+		if expires != "" {
+			os.WriteFile(cfg.KeysMapPath, []byte(fp+" test-agent/expired expires:"+expires+"\n"), 0o644)
+		}
+		cfg.Getenv = func(k string) string {
+			if k == "SSH_USER_AUTH" {
+				return authFile
+			}
+			return ""
+		}
+		cfg.Now = func() time.Time { return time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC) }
+		return cfg, rec, stderr
+	}
+
+	// expired: allowed argv still denied, exit 125, one deny event
+	cfg, rec, stderr := build("2025-05-01T00:00:00Z")
+	code := Run(cfg, "/bin/echo hello")
+	if code != 125 {
+		t.Fatalf("expired key: exit %d, want 125", code)
+	}
+	out := stderr.String()
+	if !strings.Contains(out, `"class":"denied"`) || !strings.Contains(out, "expired") {
+		t.Fatalf("expired key result line: %s", out)
+	}
+	if len(rec.Events) != 1 || rec.Events[0].Decision != audit.DecisionDeny ||
+		rec.Events[0].KeyID != "test-agent/expired" {
+		t.Fatalf("expired key events: %+v", rec.Events)
+	}
+
+	// not yet expired: the same setup must run
+	cfg, _, stderr = build("2025-06-10T00:00:00Z")
+	if code := Run(cfg, "/bin/echo hello"); code != 0 {
+		t.Fatalf("valid TTL key: exit %d, stderr %s", code, stderr.String())
+	}
+
+	// no expiry at all: identity maps, exec runs (regression)
+	cfg, _, stderr = build("")
+	if code := Run(cfg, "/bin/echo hello"); code != 0 {
+		t.Fatalf("no-TTL key: exit %d, stderr %s", code, stderr.String())
+	}
+}
