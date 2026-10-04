@@ -189,6 +189,20 @@ func cmdDoctor(args []string) int {
 		} else {
 			fail("sshd", strings.Join(drift, ", "))
 		}
+
+		// --- sftp subsystem must not bypass the shell (§5.3)
+		// OpenSSH runs exec requests (commands, scp, rsync, git…) and
+		// *external* subsystems through the user's login shell, so they
+		// all flow through sysh and its policy. internal-sftp runs inside
+		// the sshd process and would bypass the shell entirely; it cannot
+		// be restricted per-Match, so all we can do is detect it.
+		if sftp := subsystemSFTP(string(out)); sftp != "" {
+			if strings.HasPrefix(sftp, "internal-sftp") {
+				warn("sshd", "sftp subsystem is internal-sftp: sftp sessions for sy would bypass sysh (in-process in sshd, never reaching the login shell); configure the external sftp-server so they flow through the shell like scp/rsync do")
+			} else {
+				ok("sshd", "sftp subsystem is external ("+sftp+"): sftp, scp and rsync sessions for sy all flow through the sysh shell")
+			}
+		}
 	}
 
 	// --- yama ptrace_scope (§6.7)
@@ -332,6 +346,18 @@ func parseSSHD(out string) map[string]string {
 		}
 	}
 	return m
+}
+
+// subsystemSFTP extracts the effective sftp subsystem command from
+// `sshd -T` output; "" when no sftp subsystem is configured.
+func subsystemSFTP(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && f[0] == "subsystem" && f[1] == "sftp" {
+			return strings.Join(f[2:], " ")
+		}
+	}
+	return ""
 }
 
 func fileExists(p string) bool {

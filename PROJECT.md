@@ -245,6 +245,39 @@ ExposeAuthInfo yes
 `sshd -T -C user=sy,host=<host>,addr=<addr>` (sshd is first-match-wins and
 `Include` support varies by distro) and fails on any drift.
 
+
+#### What flows through the login shell (verified)
+
+OpenSSH `session.c` executes every *exec* request through the user's login
+shell — `execve(shell, {shell, "-c", command})` — and routes *external*
+subsystem requests through the same path (`do_exec(ssh, s, subsystem_args)`).
+Verified live on a stock Debian 12 host by installing a logging shell as a
+test account's login shell and connecting with each client:
+
+| client                    | what the login shell receives                          |
+|---------------------------|--------------------------------------------------------|
+| `ssh host cmd`            | `-c '<cmd>'`                                            |
+| `ssh host` (shell request)| `argv[0] = -<shell>` (login form, no `-c`)              |
+| `scp` (upload / download) | `-c 'scp -t <dir>'` / `-c 'scp -f <file>'`              |
+| `rsync`                   | `-c 'rsync --server <flags> . <path>'`                  |
+| `sftp` (external binary)  | `-c '/usr/lib/openssh/sftp-server'`                     |
+
+Consequences:
+
+- **File-transfer tools cannot sidestep the argv policy.** An operator
+  scoping a `rsync --server …` or `scp -f …` rule is scoping file movement
+  itself; a transfer the policy does not name is denied and recorded like
+  any other command. Verified end-to-end against a production sysh
+  install: `scp`, `rsync` and `sftp` sessions as `sy` all produced normal
+  `deny` events with their full remote-side argv.
+- **`internal-sftp` is the one exception**: it runs in-process inside
+  sshd (`sftp_server_main()`), never reaching any login shell, and
+  `Subsystem` cannot be restricted per-`Match`. Doctor therefore resolves
+  the effective subsystem via `sshd -T` and warns when it is
+  `internal-sftp` (recommendation: the external `sftp-server` binary,
+  which the Debian/Ubuntu default already uses, so the default posture
+  needs no change).
+
 ## 6. Gateway semantics (`sysh` as login shell, uid=sy)
 
 ### 6.1 argv is the unit of trust

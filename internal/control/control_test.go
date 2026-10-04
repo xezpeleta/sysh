@@ -715,3 +715,17 @@ func TestReadAllowedGroups(t *testing.T) {
 		t.Fatalf("parsed groups = %v", got)
 	}
 }
+
+func TestSubsystemSFTP(t *testing.T) {
+	// sshd -T emits the effective subsystem in this shape
+	out := "port 22\naddressfamily any\nlistenaddress 0.0.0.0\nsubsystem sftp /usr/lib/openssh/sftp-server\n"
+	if got := subsystemSFTP(out); got != "/usr/lib/openssh/sftp-server" {
+		t.Fatalf("external subsystem: %q", got)
+	}
+	if got := subsystemSFTP("subsystem sftp internal-sftp\n"); got != "internal-sftp" {
+		t.Fatalf("internal subsystem: %q", got)
+	}
+	if got := subsystemSFTP("port 22\n"); got != "" {
+		t.Fatalf("no subsystem: %q", got)
+	}
+}

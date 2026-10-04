@@ -55,6 +55,15 @@ a shell.
   `no_new_privs` makes that a kernel property for the whole agent process
   tree; the only elevation surface is the sudoers fragment `policy install`
   generates, root-owned and limited to the operator's chosen exact argv.
+- **No file-transfer side door.** Everything that rides the SSH session
+  reaches the same gate: one-off commands, `scp`, `rsync`, even `sftp` —
+  sshd executes all of them through the login shell, so moving files is
+  policy-checked and recorded exactly like running a command
+  (`rsync … sy@host:/path` and a hand-typed `ssh sy@host 'rsync …'` hit
+  the identical argv rule). The one exception — an `internal-sftp`
+  subsystem, which runs inside sshd itself and bypasses any login shell —
+  is detected by `sysh doctor`, which recommends the external
+  `sftp-server` (the Debian/Ubuntu default) instead.
 - **Human-gated root work (phase 2).** Mark a privileged rule
   `approval = true` and it stops pre-authorizing: each exec becomes a
   request the operator approves from anywhere root SSH reaches
