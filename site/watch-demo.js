@@ -70,7 +70,7 @@
     await sleep(450);
   }
 
-  var REQ = { host: "web01", id: "req_9b3c41d07aa2", argv: "/usr/bin/hostnamectl set-hostname web02.example.net" };
+  var REQ = { host: "web01", id: "req_9b3c41d07aa2", argv: "/usr/bin/systemctl restart logrotate" };
 
   async function run() {
     for (;;) {
@@ -79,15 +79,17 @@
       hideModal();
       await sleep(900);
 
-      addRow({ t: "14:02:11", host: "web01", key: "sy/web01", argv: "/usr/bin/ping -c 3 192.168.1.1", d: "allow", exit: 0 });
+      addRow({ t: "14:02:11", host: "web01", key: "sy/web01", argv: "/usr/bin/uptime", d: "allow", exit: 0 });
       await sleep(850);
-      addRow({ t: "14:02:14", host: "web01", key: "sy/web01", argv: "/usr/bin/ping -c 3 1.1.1.1", d: "allow", exit: 0 });
+      addRow({ t: "14:02:14", host: "web01", key: "sy/web01", argv: "/usr/bin/df -h /", d: "allow", exit: 0 });
       await sleep(1000);
-      addRow({ t: "14:02:31", host: "web01", key: "sy/web01", argv: "/usr/bin/hostnamectl set-hostname web02.example.net", d: "deny", exit: 125 });
+      addRow({ t: "14:02:31", host: "web01", key: "sy/web01", argv: "/usr/bin/rm /var/log/apache2/error.log.1", d: "deny", exit: 125 });
+      await sleep(950);
+      addRow({ t: "14:02:34", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl restart logrotate", d: "deny", exit: 125 });
       await sleep(1100);
 
       // the approval request: parked, pending, waiting for a human
-      addRow({ t: "14:02:33", host: "web01", key: "sy/web01", argv: "/usr/bin/hostnamectl set-hostname web02.example.net", d: "request", priv: true });
+      addRow({ t: "14:02:36", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl restart logrotate", d: "request", priv: true });
       showPending(REQ);
 
       // the operator clicks "approve here" — the ceremony opens in
@@ -95,7 +97,7 @@
       await sleep(1400);
       openModal();
       await sleep(1000);
-      await typeInto(mtyped, "web02.example.net");
+      await typeInto(mtyped, "logrotate");
       await sleep(500);
       mstate.textContent = "waiting for your token touch…";
       await sleep(1500);
@@ -105,9 +107,9 @@
 
       // the outcome flows back into the wall
       await sleep(500);
-      addRow({ t: "14:03:02", host: "web01", key: "root",    argv: "/usr/bin/hostnamectl set-hostname web02.example.net", d: "approve", priv: true });
+      addRow({ t: "14:03:02", host: "web01", key: "root",    argv: "/usr/bin/systemctl restart logrotate", d: "approve", priv: true });
       await sleep(650);
-      addRow({ t: "14:03:02", host: "web01", key: "sy/web01", argv: "/usr/bin/hostnamectl set-hostname web02.example.net", d: "result", exit: 0 });
+      addRow({ t: "14:03:02", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl restart logrotate", d: "result", exit: 0 });
       hidePending();
 
       // rest state: everything answered, nothing pending

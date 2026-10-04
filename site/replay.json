@@ -1,7 +1,7 @@
 {
  "cwd": "~/ops/web01",
- "prompt": "web01 becomes web02 today, after the hardware swap. Check the network is healthy on the old box, then rename it.",
- "intro": "I'll ping the gateway and an outside address from web01 to confirm the network is healthy, then set the new hostname.",
+ "prompt": "web01 is slow today. Find out why.",
+ "intro": "I'll check load and disk on web01 — slow is usually one of the two.",
  "script": [
   [
    "k",
@@ -61,7 +61,7 @@
   ],
   [
    "c",
-   "\n\n// network checks \u2014 read-only, the policy allows them"
+   "\n\n// look first — reads, the policy allows them"
   ],
   [
    "k",
@@ -69,7 +69,7 @@
   ],
   [
    "",
-   " gateway"
+   " load"
   ],
   [
    "p",
@@ -89,7 +89,7 @@
   ],
   [
    "s",
-   "\"/usr/bin/ping -c 3 192.168.1.1\""
+   "\"/usr/bin/uptime\""
   ],
   [
    "p",
@@ -101,7 +101,7 @@
   ],
   [
    "",
-   " outside"
+   " disk"
   ],
   [
    "p",
@@ -121,7 +121,7 @@
   ],
   [
    "s",
-   "\"/usr/bin/ping -c 3 1.1.1.1\""
+   "\"/usr/bin/df -h /\""
   ],
   [
    "p",
@@ -129,7 +129,7 @@
   ],
   [
    "c",
-   "\n\n// the rename \u2014 root-only, no rule in the policy allows it"
+   "\n\n// found it: disk at 96%, old apache logs — clean them up"
   ],
   [
    "k",
@@ -137,7 +137,7 @@
   ],
   [
    "",
-   " hostname"
+   " cleanup"
   ],
   [
    "p",
@@ -157,7 +157,43 @@
   ],
   [
    "s",
-   "\"/usr/bin/hostnamectl set-hostname web02.example.net\""
+   "\"/usr/bin/rm /var/log/apache2/error.log.1\""
+  ],
+  [
+   "p",
+   ");"
+  ],
+  [
+   "c",
+   "\n// refused — no rule allows it. the durable fix, then:"
+  ],
+  [
+   "k",
+   "\nconst"
+  ],
+  [
+   "",
+   " rotate"
+  ],
+  [
+   "p",
+   " ="
+  ],
+  [
+   "k",
+   " await"
+  ],
+  [
+   "f",
+   " ssh"
+  ],
+  [
+   "p",
+   "("
+  ],
+  [
+   "s",
+   "\"/usr/bin/systemctl restart logrotate\""
   ],
   [
    "p",
@@ -173,7 +209,7 @@
   ],
   [
    "",
-   " gateway"
+   " load"
   ],
   [
    "p",
@@ -181,7 +217,7 @@
   ],
   [
    "",
-   " outside"
+   " disk"
   ],
   [
    "p",
@@ -189,7 +225,15 @@
   ],
   [
    "",
-   " hostname"
+   " cleanup"
+  ],
+  [
+   "p",
+   ","
+  ],
+  [
+   "",
+   " rotate"
   ],
   [
    "p",
@@ -199,38 +243,45 @@
  "calls": [
   {
    "t": 0,
-   "d": 920,
+   "d": 820,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/ping -c 3 192.168.1.1'\" }"
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/uptime'\" }"
   },
   {
-   "t": 1200,
-   "d": 920,
+   "t": 1050,
+   "d": 820,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/ping -c 3 1.1.1.1'\" }"
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/df -h /'\" }"
   },
   {
-   "t": 2600,
+   "t": 2100,
    "d": 420,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/hostnamectl set-hostname web02.example.net'\", exit: 125 }",
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/rm /var/log/apache2/error.log.1'\", exit: 125 }",
+   "err": true
+  },
+  {
+   "t": 2700,
+   "d": 420,
+   "name": "bash",
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/systemctl restart logrotate'\", exit: 125 }",
    "err": true
   }
  ],
- "wallMs": 3020,
- "output": "{\n  \"gateway\": \"192.168.1.1 - 3/3 replies, 0.4 ms\",\n  \"outside\": \"1.1.1.1 - 3/3 replies, 12.1 ms\",\n  \"hostname\": \"refused: no rule allows this argv (exit 125)\"\n}",
+ "wallMs": 3400,
+ "output": "{\n  \"load\": \"0.18 0.15 0.09 — not the CPU\",\n  \"disk\": \"/ — 96% full, /var/log/apache2 at 41 GB\",\n  \"cleanup\": \"refused: no rule allows this argv (exit 125)\",\n  \"rotate\": \"refused: no rule allows this argv (exit 125)\"\n}",
  "answer": [
   [
    "p",
-   "The network is healthy: <b>zero loss</b> to the gateway (0.4&nbsp;ms) and to the outside (12&nbsp;ms). Whatever felt slow this morning, it wasn't web01."
+   "The slowness is the <b>disk</b>: <b>96%&nbsp;full</b>, 41&nbsp;GB of old Apache logs under <code>/var/log/apache2</code>. Load is 0.18 — whatever felt slow this morning was I/O on a full disk."
   ],
   [
    "p",
-   "The one thing I could not do: <b>rename the host</b>. <code>hostnamectl</code> needs root, no rule in the policy allows it, and sysh refused it with <b>exit 125</b> before anything ran. A rename is an operator's call - yours, one approval in <code>sy watch</code>, signed with your token."
+   "What I could not do: <b>clean it up</b>. Deleting the old logs — refused, <b>exit&nbsp;125</b>. Making the rotation run so it never happens again — refused too, same exit. I tried to be helpful twice; the server said no twice, before anything ran. What leaves a production disk is an operator's call — yours, one approval in <code>sy watch</code>, signed with your token."
   ],
   [
    "p",
-   "Both pings and the refusal are in the server's journal under <code>journalctl -t sysh</code>, with the key id and the full argv. I cannot erase that; you don't have to take my word for any of it."
+   "The reads, and both refusals, are in the server's journal under <code>journalctl -t sysh</code>, with the key id and the full argv. I cannot erase that; you don't have to take my word for any of it."
   ]
  ]
 }
