@@ -1,14 +1,9 @@
 {
- "title": "plain ssh \u2014 sy@web01.example.net",
+ "title": "plain ssh — sy@web01.example.net",
  "lines": [
   {
    "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'",
    "o": " 13:04:01 up 41 days,  1 user,  load average: 0.14, 0.18, 0.09",
-   "m": "ok"
-  },
-  {
-   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl is-active apache2'",
-   "o": "active",
    "m": "ok"
   },
   {
@@ -20,6 +15,29 @@
    "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'",
    "o": "{\"sysh\":1,\"class\":\"denied\",\"detail\":\"no rule allows this argv\",\"exit\":125}",
    "m": "deny"
+  },
+  {
+   "n": "# the operator later grants exactly this — as a per-exec approval:"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'",
+   "o": "{\"sysh\":1,\"class\":\"approval_required\",\"detail\":\"operator approval required (sysh approvals as root on this host)\",\"key_id\":\"sy/web01.example.net\",\"exit\":30,\"request_id\":\"req_9b3c1d5e7a42\"}",
+   "m": "req"
+  },
+  {
+   "n": "# a human answers, from anywhere root SSH reaches:"
+  },
+  {
+   "c": "ssh -t root@web01.example.net 'sysh approve req_9b3c1d5e7a42'",
+   "o": "request req_9b3c1d5e7a42\n  key:    sy/web01.example.net (claimed)\n  argv:   [\"/usr/bin/systemctl\",\"restart\",\"mariadb\"]\n  rule:   4, timeout 30s\nexecute as root? [yes/no] type argument 2 exactly as shown (mariadb):\nexecuted: exit=0 in 213ms; the agent fetches the outcome with: sysh-result req_9b3c1d5e7a42",
+   "m": "ok",
+   "l": "a human typed yes — with the exact argv on screen"
+  },
+  {
+   "c": "ssh -i agent.key sy@web01.example.net 'sysh-result req_9b3c1d5e7a42'",
+   "o": "{\"sysh\":1,\"class\":\"result\",\"key_id\":\"sy/web01.example.net\",\"exit\":0,\"request_id\":\"req_9b3c1d5e7a42\"}",
+   "m": "ok",
+   "l": "read-only — the agent fetches the outcome"
   },
   {
    "c": "cat security.conf.new | ssh -i agent.key sy@web01.example.net '/usr/bin/tee /etc/apache2/conf-available/security.conf'",
@@ -37,13 +55,13 @@
    "m": "priv"
   },
   {
-   "n": "# on the server \u2014 the record this channel cannot forge or erase:"
+   "n": "# on the server — the record this channel cannot forge or erase:"
   },
   {
-   "c": "journalctl -t sysh -o verbose | grep -E 'KEYID|ARGV|PRIV|DECISION'",
-   "o": "    KEYID=sy/web01.example.net\n    ARGV=[\"/usr/bin/systemctl\",\"restart\",\"mariadb\"]  DECISION=deny\n    ARGV=[\"/usr/bin/systemctl\",\"reload\",\"apache2\"]  PRIV=true",
+   "c": "journalctl -t sysh -o verbose | grep -E '_UID|KEYID|ARGV|PRIV|DECISION'",
+   "o": "    _UID=999  KEYID=sy/web01.example.net\n    ARGV=[\"/usr/bin/systemctl\",\"restart\",\"mariadb\"]  DECISION=request  PRIV=true\n    _UID=0  DECISION=approve  EXIT=0\n    ARGV=[\"/usr/bin/systemctl\",\"reload\",\"apache2\"]  PRIV=true",
    "m": "c",
-   "l": "sudo's own PAM line too, independently"
+   "l": "the approval is in there — _UID=0"
   }
  ]
 }

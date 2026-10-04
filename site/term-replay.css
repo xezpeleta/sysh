@@ -83,6 +83,7 @@
 }
 .term-replay .mk.ok { color: var(--green, #4a8f5c); }
 .term-replay .mk.no { color: var(--red, #f07167); }
+.term-replay .mk.req { color: #a06a1f; }
 .term-replay .mk.c {
   color: var(--muted, #5c6670);
   font-weight: 400;

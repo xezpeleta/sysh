@@ -15,8 +15,9 @@
 <body>
 
 <div class="announce">
-  <span class="dot">●</span> Phase 1 shipped — v0.1.0, first fleet deployment verified end-to-end.
-  <a href="https://github.com/xezpeleta/sysh/releases/tag/v0.1.0">see the release ↗</a>
+  <span class="dot">●</span> v0.2.0 — pre-authorized root verbs &amp; worked examples.
+  The approval channel (per-exec human yes/no) is verified live and in main.
+  <a href="https://github.com/xezpeleta/sysh/releases">releases ↗</a>
 </div>
 
 <nav class="nav">
@@ -84,9 +85,10 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
   <strong>No agent required.</strong> sysh is not a harness — it is a login
   shell, so anything that speaks SSH gets the same treatment: your scripts,
   your CI job, a junior admin on a laptop. Below, the same host driven by
-  nothing but <code>ssh</code> — same bounds, same refusals. The last
-  command is you, on the server, reading the record this channel cannot
-  touch.
+  nothing but <code>ssh</code> — same bounds, same refusals — plus the part
+  that needs no policy at all: a root command the agent can only
+  <em>ask</em> for, and a human who answers. The last command is you, on
+  the server, reading the record this channel cannot touch.
 </p>
 <figure class="term-replay" data-term-replay="term-demo.json">
   <pre class="term-replay__fallback">$ ssh -i agent.key sy@web01.example.net '/usr/bin/uptime'
@@ -95,19 +97,78 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
 $ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'
   {"sysh":1,"class":"denied","detail":"no rule allows this argv","exit":125}   ✗ denied by policy
 
+# the operator later grants exactly this — as a per-exec approval:
+$ ssh -i agent.key sy@web01.example.net '/usr/bin/systemctl restart mariadb'
+  {"sysh":1,"class":"approval_required",...,"exit":30,"request_id":"req_9b3c1d5e7a42"}   ? operator approval required
+
+# a human answers, from anywhere root SSH reaches:
+$ ssh -t root@web01.example.net 'sysh approve req_9b3c1d5e7a42'
+  request req_9b3c1d5e7a42
+    key:    sy/web01.example.net (claimed)
+    argv:   ["/usr/bin/systemctl","restart","mariadb"]
+    rule:   4, timeout 30s
+  execute as root? [yes/no] type argument 2 exactly as shown (mariadb):
+  executed: exit=0 in 213ms; the agent fetches the outcome with: sysh-result req_9b3c1d5e7a42
+
+$ ssh -i agent.key sy@web01.example.net 'sysh-result req_9b3c1d5e7a42'
+  {"sysh":1,"class":"result","key_id":"sy/web01.example.net","exit":0,...}   ✓ read-only fetch
+
 $ cat security.conf.new | ssh -i agent.key sy@web01.example.net \
     '/usr/bin/tee /etc/apache2/conf-available/security.conf'
   {"sysh":1,"class":"exec","PRIV":true,"exit":0}   ✓ pre-authorized root verb
 
 # on the server — the record this channel cannot forge or erase:
-$ journalctl -t sysh -o verbose | grep -E 'KEYID|ARGV|PRIV|DECISION'
-    KEYID=sy/web01.example.net
-    ARGV=["/usr/bin/systemctl","restart","mariadb"]  DECISION=deny
+$ journalctl -t sysh -o verbose | grep -E '_UID|KEYID|ARGV|PRIV|DECISION'
+    _UID=999  KEYID=sy/web01.example.net
+    ARGV=["/usr/bin/systemctl","restart","mariadb"]  DECISION=request  PRIV=true
+    _UID=0  DECISION=approve  EXIT=0
     ARGV=["/usr/bin/systemctl","reload","apache2"]  PRIV=true</pre>
   <figcaption>also emulated — plain ssh, no AI anywhere, same bounds and same record</figcaption>
 </figure>
 
 <main class="wrap">
+
+<section id="ways">
+  <p class="kicker">The model</p>
+  <h2>Three ways to let an agent work</h2>
+  <p class="section-lead">
+    Same host, same login, same record. The only variable is how much you
+    trust the work — and every command lives in exactly one of these.
+  </p>
+  <div class="ways">
+    <div class="way">
+      <div class="way-n">1</div>
+      <h3>It can look, not touch</h3>
+      <p>Reads, checks, diagnostics — granted one by one and exactly. The
+      agent can answer <em>&ldquo;what&rsquo;s wrong with
+      web01?&rdquo;</em> all day. It cannot change anything, and it never
+      gets root.</p>
+      <p class="way-use">start here — triage, health checks, reading logs</p>
+    </div>
+    <div class="way">
+      <div class="way-n">2</div>
+      <h3>It can ask</h3>
+      <p>When something needs root, the agent doesn&rsquo;t have it: the
+      request waits. You see the exact command and answer yes or no, from
+      anywhere you can SSH. Nothing runs before you answer — and a no costs
+      nothing.</p>
+      <p class="way-use">add it when it earns trust — the restart only a human should order</p>
+    </div>
+    <div class="way">
+      <div class="way-n">3</div>
+      <h3>It can act — on what you wrote down</h3>
+      <p>The routine you&rsquo;d automate anyway: the enumerated write, the
+      validation, the reload. Root included — but only the exact actions you
+      listed, checked when you wrote them, recorded twice.</p>
+      <p class="way-use">graduate the boring loop — nobody should babysit it</p>
+    </div>
+  </div>
+  <p class="ways-note">
+    Start at 1. When its requests get repetitive enough to trust, add 2.
+    Move what&rsquo;s truly boring into 3. All three run side by side — and
+    every attempt, in any of them, lands in the same journal.
+  </p>
+</section>
 
 <section id="how">
   <p class="kicker">How it works</p>
@@ -137,8 +198,9 @@ $ journalctl -t sysh -o verbose | grep -E 'KEYID|ARGV|PRIV|DECISION'
       <h3>Refuses to elevate</h3>
       <p>Every process runs under <code>no_new_privs</code>: setuid and sudo
       are kernel-disabled for the whole agent tree. Root work happens only
-      through operator-written <em>privileged rules</em> — exact-argv sudo
-      grants, validated at install.</p>
+      through operator-written <em>privileged rules</em>: pre-authorized
+      exact-argv grants, or a per-exec approval a human answers by hand.
+      Both are validated at install.</p>
     </div>
   </div>
 </section>

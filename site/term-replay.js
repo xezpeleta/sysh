@@ -15,6 +15,7 @@
   var MARKS = {
     ok: { cls: 'ok', glyph: '✓', label: 'allowed' },
     deny: { cls: 'no', glyph: '✗', label: 'denied by policy — exit 125' },
+    req: { cls: 'req', glyph: '?', label: 'operator approval required — exit 30' },
     priv: { cls: 'ok', glyph: '✓', label: 'pre-authorized root verb' },
     c: { cls: 'c', glyph: '', label: '' }
   };
