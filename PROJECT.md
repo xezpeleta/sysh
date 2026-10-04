@@ -707,6 +707,26 @@ here):
   `approval_required` (exit 30) responses carry the request id and
   instruct the agent to report and stop, not poll.
 
+`sy` also carries the **operator-side approval ceremony** — `sy
+approvals [host]` (listing passthrough) and `sy approve [host] <id>` —
+which wrap transport B into one command: fetch the exact request bytes
+from the server over the operator's root SSH channel, display the
+server-recorded argv, sign with the configured approver key
+(`hosts.toml [approver] key`, typically `sk-*` — PIN and touch happen
+inside `ssh-keygen`, in the operator's terminal), and submit. The
+command recomputes the request id from the fetched content locally and
+refuses on mismatch before anything reaches the signing gesture.
+
+Why the ceremony is operator-run and never agent-run: the FIDO2 PIN and
+touch prompts are *blind* — they authorize whatever bytes the invoking
+process signs. If the agent drove the loop ("insert your YubiKey…",
+"enter PIN…") it could display one argv while signing another; the
+gesture would then approve the hidden one. The display that accompanies
+the gesture must come from the server over a channel the agent cannot
+write to — root SSH with the operator's key. `sy approve` is
+deliberately absent from the MCP tool list: the agent's role is to
+report the request id and wait (polling `sysh-result` is fine).
+
 `sy` runs in a different trust domain from the server package. It rides
 in the same .deb (inert on hosts: a client without a hosts.toml does
 nothing), but its trust assumptions live on the operator machine. **Deployment requirement DR1:** the agent harness

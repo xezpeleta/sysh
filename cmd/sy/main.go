@@ -23,6 +23,10 @@ func main() {
 	switch os.Args[1] {
 	case "mcp":
 		cmdMCP(os.Args[2:])
+	case "approve":
+		os.Exit(cmdApproveClient(os.Args[2:]))
+	case "approvals":
+		os.Exit(cmdApprovalsClient(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	default:
@@ -32,5 +36,8 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: sy mcp    (stdio MCP server: sy_exec, sy_docs, sy_policy)")
+	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  sy mcp                    stdio MCP server (sy_exec, sy_docs, sy_policy)")
+	fmt.Fprintln(os.Stderr, "  sy approve [host] <id>    operator approval ceremony (YubiKey sign + submit)")
+	fmt.Fprintln(os.Stderr, "  sy approvals [host]       list pending approval requests")
 }

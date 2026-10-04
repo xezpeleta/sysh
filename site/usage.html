@@ -129,6 +129,20 @@ request&rsquo;s exact bytes and the <code>sysh-approve</code> namespace;
 an unregistered key, a wrong file, a replayed signature — all refused,
 request stays pending. The typed-argument challenge of interactive
 approve still applies to pattern rules.</p>
+<p>One command wraps the whole ceremony — <code>sy approve</code>,
+run by you in your terminal (never a tool the agent can call): it
+fetches the request bytes from the server over your root SSH channel,
+shows the server-recorded argv, and runs the sign+submit with your
+approver key (YubiKey PIN and touch happen inside):</p>
+<pre><code>op@laptop$ sy approve req_9b3c1d5e7a42
+<span class="out">┌─ sysh approval request req_9b3c1d5e7a42 ──────────────
+│  key: sy/server.example (claimed)  age: 8s
+│  argv: /usr/sbin/reboot
+└─ sign with your approver key to authorize exactly this ──</span>
+<span class="out">signature ok: approver ops-yubi (…); executed: exit=0 in 30ms</span></code></pre>
+<p>The display comes from the server through your own channel — the
+agent cannot fake that screen, which is exactly why the approval
+gesture lives here and not in agent tool space.</p>
 
 <h2 id="privileged"><span class="step">STEP 6</span>Root verbs: privileged rules</h2>
 <p>For work that needs root, the operator pre-authorizes <em>exact</em>

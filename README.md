@@ -103,7 +103,10 @@ a shell.
   Desktop, …) with three tools — `sy_exec`, `sy_docs`, `sy_policy` —
   dialing hosts as the unprivileged `sy` user over SSH with strict
   known_hosts. It has no approval power: an approval-required exec
-  surfaces the request id and tells the agent to stop.
+  surfaces the request id and tells the agent to stop. The matching
+  operator command `sy approve <id>` wraps the signing ceremony into
+  one step: server-recorded argv display (over your root SSH), YubiKey
+  PIN + touch, submit.
 - **Not an agent or a harness.** It works with any client that speaks SSH
   and passes an argv — scripts, CLI copilots, MCP bridges, humans.
 - **Not a replacement for human access.** Your SSH is untouched.

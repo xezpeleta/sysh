@@ -62,10 +62,17 @@ type hostConfig struct {
 	Key     string `toml:"key"`
 }
 
+// approverConfig is the operator's signing key for `sy approve`
+// (typically an sk-* key on a hardware token).
+type approverConfig struct {
+	Key string `toml:"key"`
+}
+
 // hostsFile is the whole config.
 type hostsFile struct {
-	Default string                 `toml:"default"`
-	Hosts   map[string]*hostConfig `toml:"hosts"`
+	Default  string                 `toml:"default"`
+	Hosts    map[string]*hostConfig `toml:"hosts"`
+	Approver *approverConfig        `toml:"approver"`
 }
 
 // loadHosts reads the config; a missing file is an explicit error (an
