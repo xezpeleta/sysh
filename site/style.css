@@ -419,10 +419,11 @@ ul.plain strong { color: var(--text); }
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  margin: 1.4rem 0;
+  margin: 1.4rem auto;
   background: var(--card);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   height: 430px;          /* fixed window: rows arriving never resize it */
+  max-width: 760px;       /* fixed width too: a browser window, not a banner */
   display: flex;
   flex-direction: column;
 }
@@ -432,7 +433,11 @@ ul.plain strong { color: var(--text); }
   display: flex;
   flex-direction: column;
 }
-.wd-table { flex: 1; }
+.wd-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;       /* rows keep their natural height; extras clip */
+}
 .wd-chrome {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 10px;

@@ -109,18 +109,20 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
       <span class="wd-count" id="wd-count"></span>
       <span class="wd-theme">◐</span>
     </div>
+    <div class="wd-pending" id="wd-pending" hidden>
+      <div class="wd-phead">waiting for you — one click answers it</div>
+      <div class="wd-prow" id="wd-prow"></div>
+    </div>
     <div class="wd-toolbar">
       <span class="wd-search">search argv, key, host…</span>
       <span class="wd-chip on g">allow</span><span class="wd-chip on r">deny</span>
       <span class="wd-chip on a">request</span><span class="wd-chip on b">approval</span>
     </div>
-    <table class="wd-table">
-      <thead><tr><th>time</th><th>host</th><th>key</th><th class="wd-argv">argv</th><th>decision</th><th>exit</th></tr></thead>
-      <tbody id="wd-rows"></tbody>
-    </table>
-    <div class="wd-pending" id="wd-pending" hidden>
-      <div class="wd-phead">waiting for you — one click answers it</div>
-      <div class="wd-prow" id="wd-prow"></div>
+    <div class="wd-scroll">
+      <table class="wd-table">
+        <thead><tr><th>time</th><th>host</th><th>key</th><th class="wd-argv">argv</th><th>decision</th><th>exit</th></tr></thead>
+        <tbody id="wd-rows"></tbody>
+      </table>
     </div>
     <div class="wd-modal" id="wd-modal" hidden>
       <div class="wd-modal-box">
