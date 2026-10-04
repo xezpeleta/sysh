@@ -720,7 +720,14 @@ the display and the signature sits a confirmation prompt (TTY-only,
 refused on pipes): with `sk-*` keys the PIN and touch inside
 `ssh-keygen` are the gesture, but a passphrase-less software key signs
 silently — for that case the operator typing `yes` after reading the
-server-recorded argv is the whole ceremony.
+server-recorded argv is the whole ceremony. When the approver key is
+`sk-*` (detected from its paired `.pub`), the ceremony also runs an
+insertion loop first — "insert your YubiKey…", polling every 500ms for
+up to 30s — because `ssh-keygen` fails outright with no token attached.
+Presence is probed with `fido2-token -L` when available (any
+authenticator) or the Yubico USB vendor id in sysfs otherwise; on
+timeout nothing is signed and the request stays pending. With a
+software key the loop is skipped.
 
 Why the ceremony is operator-run and never agent-run: the FIDO2 PIN and
 touch prompts are *blind* — they authorize whatever bytes the invoking

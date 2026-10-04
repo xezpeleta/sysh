@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xezpeleta/sysh/internal/approval"
 )
@@ -206,5 +207,77 @@ func TestApproveClientAbortedGesture(t *testing.T) {
 	t.Cleanup(func() { sshExec, sshSign = oldSSH, oldSign })
 	if code := cmdApproveClient([]string{id}); code != 1 {
 		t.Fatalf("want exit 1, got %d", code)
+	}
+}
+
+func withProbe(t *testing.T, present bool, wait time.Duration) {
+	t.Helper()
+	oldProbe, oldWait := skProbe, insertWait
+	skProbe = func() bool { return present }
+	insertWait = wait
+	t.Cleanup(func() { skProbe, insertWait = oldProbe, oldWait })
+}
+
+func TestApproveClientSkInsertLoopTimeout(t *testing.T) {
+	withYesGesture(t, true)
+	withProbe(t, false, 100*time.Millisecond)
+	dir := t.TempDir()
+	key := filepath.Join(dir, "approver-sk")
+	os.WriteFile(key, []byte("private"), 0o600)
+	os.WriteFile(key+".pub", []byte("sk-ssh-ed25519@openssh.com AAAA test\n"), 0o644)
+	withTestConfig(t, "\n[approver]\nkey = \""+key+"\"\n")
+	id, body := fakeBody(t, []string{"/usr/sbin/reboot"}, "sy/h1")
+	oldSSH, oldSign := sshExec, sshSign
+	sshExec = func(addr string, args []string, stdin io.Reader, out *bytes.Buffer) int {
+		out.Write(body)
+		return 0
+	}
+	sshSign = func(key, file string) error {
+		t.Error("must not sign when the token never appears")
+		return nil
+	}
+	t.Cleanup(func() { sshExec, sshSign = oldSSH, oldSign })
+	if code := cmdApproveClient([]string{id}); code != 1 {
+		t.Fatalf("want exit 1, got %d", code)
+	}
+}
+
+func TestApproveClientSkInsertLoopProceeds(t *testing.T) {
+	withYesGesture(t, true)
+	withProbe(t, true, 30*time.Second)
+	dir := t.TempDir()
+	key := filepath.Join(dir, "approver-sk")
+	os.WriteFile(key+".pub", []byte("sk-ssh-ed25519@openssh.com AAAA test\n"), 0o644)
+	withTestConfig(t, "\n[approver]\nkey = \""+key+"\"\n")
+	id, body := fakeBody(t, []string{"/usr/sbin/reboot"}, "sy/h1")
+	oldSSH, oldSign := sshExec, sshSign
+	sshExec = func(addr string, args []string, stdin io.Reader, out *bytes.Buffer) int {
+		if args[len(args)-1] == "--show" {
+			out.Write(body)
+			return 0
+		}
+		return 0
+	}
+	sshSign = func(key, file string) error {
+		return os.WriteFile(file+".sig", []byte("SIG"), 0o600)
+	}
+	t.Cleanup(func() { sshExec, sshSign = oldSSH, oldSign })
+	if code := cmdApproveClient([]string{id}); code != 0 {
+		t.Fatalf("want exit 0, got %d", code)
+	}
+}
+
+func TestApproveClientSoftwareKeySkipsInsertLoop(t *testing.T) {
+	withYesGesture(t, true)
+	dir := t.TempDir()
+	key := filepath.Join(dir, "approver")
+	os.WriteFile(key+".pub", []byte("ssh-ed25519 AAAA test\n"), 0o644)
+	withTestConfig(t, "\n[approver]\nkey = \""+key+"\"\n")
+	if approverIsSkKey(key) {
+		t.Fatal("plain ed25519 must not be treated as sk")
+	}
+	// No .pub at all: not sk, loop skipped rather than misfiring.
+	if approverIsSkKey(filepath.Join(dir, "missing")) {
+		t.Fatal("missing .pub must not be treated as sk")
 	}
 }

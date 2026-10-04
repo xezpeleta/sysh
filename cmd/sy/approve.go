@@ -46,6 +46,61 @@ var (
 	sshSign = realSSHSign
 )
 
+// skProbe reports whether a FIDO2 authenticator is currently attached.
+// Preferred: libfido2's fido2-token (any authenticator, from the
+// fido2-tools package). Fallback with zero extra dependencies: the
+// Yubico USB vendor id in sysfs.
+var skProbe = realSkProbe
+
+func realSkProbe() bool {
+	if _, err := exec.LookPath("fido2-token"); err == nil {
+		out, err := exec.Command("fido2-token", "-L").Output()
+		return err == nil && len(bytes.TrimSpace(out)) > 0
+	}
+	matches, _ := filepath.Glob("/sys/bus/usb/devices/*/idVendor")
+	for _, m := range matches {
+		b, err := os.ReadFile(m)
+		if err == nil && strings.TrimSpace(string(b)) == "1050" {
+			return true
+		}
+	}
+	return false
+}
+
+// insertWait is how long the insert-your-YubiKey loop lasts before
+// giving up (nothing signed, request stays pending).
+var insertWait = 30 * time.Second
+
+// waitForKeyToken is the insertion loop: ssh-keygen fails outright if
+// the token is not attached, so the ceremony asks for it first and
+// polls until the operator plugs it in (or the timeout expires).
+func waitForKeyToken() bool {
+	fmt.Fprintf(os.Stderr, "insert your YubiKey… (waiting up to %s)\n", insertWait)
+	deadline := time.Now().Add(insertWait)
+	for {
+		if skProbe() {
+			fmt.Fprintln(os.Stderr, "authenticator detected")
+			return true
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintln(os.Stderr, "no authenticator within the timeout — nothing was signed")
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// approverIsSkKey reports whether the configured approver key is a
+// hardware (sk-*) key, read from its paired .pub file.
+func approverIsSkKey(key string) bool {
+	b, err := os.ReadFile(key + ".pub")
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(b))
+	return len(fields) > 0 && strings.HasPrefix(fields[0], "sk-")
+}
+
 // confirmGesture is the deliberate pause between the display and the
 // signature: with a software (passphrase-less) approver key there is no
 // PIN and no touch — the operator reading the box and typing yes is the
@@ -206,7 +261,7 @@ func cmdApproveClient(args []string) int {
 		return 1
 	}
 
-	// 3. Sign: PIN + touch happen inside ssh-keygen, operator's terminal.
+	// 3. Resolve the approver key (hosts.toml [approver] or -k).
 	key := keyOverride
 	if key == "" && hf.Approver != nil {
 		key = hf.Approver.Key
@@ -215,6 +270,15 @@ func cmdApproveClient(args []string) int {
 		fmt.Fprintln(os.Stderr, "sy approve: no approver key configured (hosts.toml [approver] key = …, or -k <path>)")
 		return 1
 	}
+
+	// 4. If the approver key is hardware-bound, ask for the token
+	// first and wait for it: ssh-keygen would just fail if unplugged.
+	if approverIsSkKey(key) && !waitForKeyToken() {
+		fmt.Fprintln(os.Stderr, "aborted (request stays pending)")
+		return 1
+	}
+
+	// 5. Sign: PIN + touch happen inside ssh-keygen, operator's terminal.
 	dir, err := os.MkdirTemp("", "sy-approve-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -236,7 +300,7 @@ func cmdApproveClient(args []string) int {
 		return 1
 	}
 
-	// 4. Submit; the server verifies and executes, printing the outcome.
+	// 5. Submit; the server verifies and executes, printing the outcome.
 	return sshExec(hc.Address, []string{"sysh", "approve", id, "--sig"}, bytes.NewReader(sig), nil)
 }
 
