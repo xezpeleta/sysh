@@ -47,7 +47,7 @@ strong { color: var(--text); font-weight: 600; }
 .announce a { color: var(--accent-deep); font-weight: 600; }
 .announce .dot { color: var(--accent); margin-right: 0.5em; }
 
-/* ---------- logo: SY in terminal ASCII, waiting cursor ---------- */
+/* ---------- logo: $Y — the prompt dollar and the Y, waiting cursor ---------- */
 .logo {
   display: inline-block;
   font-family: var(--mono);
@@ -57,7 +57,7 @@ strong { color: var(--text); font-weight: 600; }
   text-align: left;
   flex: none;
 }
-.logo .ls { color: #7ec88c; }        /* pastel green  */
+.logo .ls { color: #f0cf8e; }        /* the prompt dollar — pastel amber */
 .logo .ly { color: #96b6dd; }        /* pastel blue   */
 .logo .lc {                           /* pastel amber, blinking */
   color: #f0cf8e;
@@ -83,7 +83,7 @@ strong { color: var(--text); font-weight: 600; }
   color: var(--text);
 }
 .brand:hover { text-decoration: none; }
-.brand .logo { font-size: 9px; line-height: 1; }
+.brand .logo { font-size: 11px; line-height: 1; }
 .nav-links a {
   font-size: 11px;
   letter-spacing: 0.1em;
