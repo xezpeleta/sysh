@@ -122,7 +122,7 @@ One static Go binary on the server, behaving by role:
 │                                                                       │
 │  /etc/sysh/  (root-owned 0644/0600): authorized_keys, keys.map,       │
 │              policy.toml, docs/                                       │
-│  /run/sysh/requests/ (root:sy 0730 drop box; untrusted; phase 2)     │
+│  /run/sysh/requests/ (root:sy 1730 drop box; untrusted; phase 2)     │
 │  /run/sysh/  (root-owned; results root:sy 0750; tmpfiles.d)          │
 │  /run/sysh-tripwire/ (world-writable, sticky): lockdown only          │
 └───────────────────────────────────────────────────────────────────────┘
@@ -165,7 +165,7 @@ runs in a different trust domain (§10).
    volatile state is declared via **tmpfiles.d** and recreated at boot,
    not by postinst: `/run/sysh/` (root:root 0755; phase-2 results as
    root:sy 0750 so other local users cannot read root output) and
-   `/run/sysh/requests/` (root:sy 0730 — a **drop box**: `sy` may create
+   `/run/sysh/requests/` (root:sy 1730, sticky — a **drop box**: `sy` may create
    files but not list the directory), plus `/run/sysh-tripwire/`
    (1777, sticky). The request spool is intentionally volatile: requests
    are TTL'd at 10 minutes and must not survive a reboot.
@@ -597,7 +597,7 @@ policy did not pre-authorize; there is no bearer token to steal, replay,
 or transport.
 
 1. The agent execs an argv matching a `privileged` rule. The gateway writes
-   a **request file** into `/run/sysh/requests/` (the `root:sy 0730` drop
+   a **request file** into `/run/sysh/requests/` (the `root:sy 1730` (sticky) drop
    box of §4.2; its contents are *untrusted data*): argv, fingerprint,
    key id (claimed label), timestamp, request id. Strict grammar,
    size-capped, ASCII-only, bounded by the request lockout (§9.3). The
@@ -633,8 +633,20 @@ type the pattern-chosen argument: nginx_
    more than 5 live pending requests refuse new ones until approved or
    expired (default request TTL 10 min) — the approval-fatigue counter
    (R2). Agent-supplied "reason" text, if ever added, is untrusted display
-   data.
-4. No sudoers line, no setuid helper, no tokens, no replay journal exists
+   data. The request id is deterministic over (argv, key id): `sysh
+   approve` and `sysh approvals` recompute it from the parsed body, so a
+   file rewritten under a valid-looking name is refused before any human
+   or policy sees it (verified: TestApproveTamperedRequest).
+4. **Exclusive claim**: `sysh approve` takes the request under an
+   `O_EXCL` root-owned marker (`<id>.claimed` in the drop box) before
+   prompting; every exit path releases it. Two operators approving the
+   same request concurrently cannot both execute — exactly one claim
+   exists at any moment (the race was found and closed live: two
+   concurrent approves used to double-execute). A marker stranded by a
+   crashed approver is stealable once older than the request TTL. The
+   drop box is `1730` (sticky): sy may create files but cannot remove or
+   rename files it does not own — root's claim markers included.
+5. No sudoers line, no setuid helper, no tokens, no replay journal exists
    anywhere in this design. Elevation happens only inside a root process a
    human is watching.
 
@@ -793,7 +805,7 @@ Partial deviations, for the reviewers' attention:
 |---|---|
 | "Cannot forge its audit record" overstated (same-UID ptrace; journal drops) | P2 reworded to binary-attribution (§11); `DUMPABLE=0` + `ptrace_scope` doctor check (§6.7); policy SHA-256 in every event (§8.1); drop counters surfaced (§8.2); auditd mandatory in permissive mode (§6.6) |
 | `keys.map` 0600 unreadable by the gateway | 0644 — the mapping is not secret (§4.3) |
-| Spool `root:root 0730` not `sy`-writable; FIFO/hardlink planting; §6.5 contradicted §9 | `root:sy 0730` drop box in volatile `/run`; safe open pattern (`openat`, `O_NOFOLLOW\|O_NONBLOCK`, `S_ISREG`, `st_nlink == 1`, size caps); §6.5 states the narrow exception (§4.2, §6.5, §9) |
+| Spool `root:root 0730` not `sy`-writable; FIFO/hardlink planting; §6.5 contradicted §9 | `root:sy 1730` (sticky) drop box in volatile `/run`; safe open pattern (`openat`, `O_NOFOLLOW\|O_NONBLOCK`, `S_ISREG`, `st_nlink == 1`, size caps); §6.5 states the narrow exception (§4.2, §6.5, §9) |
 | `/run` is tmpfs — postinst-created dirs vanish | tmpfiles.d; spool deliberately volatile (§4.2) |
 | `systemd-run --scope` as `sy` needs the user manager | `--user --scope`, sanitized unit names, doctor verifies PAM/user-manager/delegation, marked fallback (§6.7) |
 | Own example violated own linter; proof of no-leading-`-` non-trivial | restricted pattern grammar + first-character set from the RE2 tree (§6.2) |

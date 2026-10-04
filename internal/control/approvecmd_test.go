@@ -280,3 +280,96 @@ func captureStdout(t *testing.T, fn func() int) string {
 	}
 	return string(buf[:n])
 }
+
+// TestApproveClaimExclusive pins the anti-double-execution claim: a
+// request whose marker is held by another approver must refuse without
+// executing or consuming anything; a marker stranded longer than the
+// request TTL (crashed approver) is stealable.
+func TestApproveClaimExclusive(t *testing.T) {
+	base := newTestEnv(t)
+	_ = base
+	installApprovalPolicy(t, base)
+	argv := []string{"/usr/bin/systemctl", "restart", "nginx"}
+	req := seedRequest(t, argv, 5*time.Second)
+
+	executed := false
+	runApproved = func(path string, args []string, timeout int, id string) execOutcome {
+		executed = true
+		return execOutcome{Exit: 0}
+	}
+	setStdin("yes\nnginx\n")
+	auditSink = &audit.Recorder{}
+
+	// another approver holds the claim right now
+	f, err := os.OpenFile(claimPath(req.ID), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if code := cmdApprove([]string{req.ID}); code != 1 {
+		t.Fatalf("approve with a live foreign claim must refuse, exit %d", code)
+	}
+	if executed {
+		t.Fatal("executed under a foreign claim")
+	}
+	if _, err := os.Stat(filepath.Join(requestsDir, req.ID)); err != nil {
+		t.Fatal("request must stay pending under a foreign claim")
+	}
+
+	// a claim stranded past the request TTL is stealable: approve proceeds
+	old := nowFn().Add(-approval.RequestTTL - time.Minute)
+	if err := os.Chtimes(claimPath(req.ID), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdApprove([]string{req.ID}); code != 0 {
+		t.Fatalf("stale claim must be stealable, exit %d", code)
+	}
+	if !executed {
+		t.Fatal("approve did not execute after stealing the stale claim")
+	}
+	if _, err := os.Stat(claimPath(req.ID)); !os.IsNotExist(err) {
+		t.Fatal("claim marker must be released after success")
+	}
+}
+
+// TestApproveTamperedRequest: the request id is deterministic over
+// (argv, key) — a body rewritten under a valid-looking name must be
+// unapprovable before any policy or human sees it.
+func TestApproveTamperedRequest(t *testing.T) {
+	base := newTestEnv(t)
+	_ = base
+	installApprovalPolicy(t, base)
+	req := seedRequest(t, []string{"/usr/bin/systemctl", "restart", "nginx"}, 5*time.Second)
+
+	executed := false
+	runApproved = func(path string, args []string, timeout int, id string) execOutcome {
+		executed = true
+		return execOutcome{Exit: 0}
+	}
+	setStdin("yes\nnginx\n")
+
+	// rewrite the body: same id field, different argv — the id no
+	// longer matches its content
+	tampered := approval.Request{
+		ID:          req.ID,
+		KeyID:       req.KeyID,
+		Fingerprint: req.Fingerprint,
+		Argv:        []string{"/usr/bin/systemctl", "restart", "mariadb"},
+		Time:        req.Time,
+	}
+	body, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(requestsDir, req.ID), body, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := cmdApprove([]string{req.ID}); code != 1 {
+		t.Fatalf("tampered request must refuse, exit %d", code)
+	}
+	if executed {
+		t.Fatal("tampered request executed")
+	}
+}

@@ -132,7 +132,7 @@ func cmdDoctor(args []string) int {
 		grp  string
 	}{
 		{"/run/sysh", 0o755, "root"},
-		{"/run/sysh/requests", 0o730, "sy"},
+		{"/run/sysh/requests", 0o1730, "sy"},
 		{"/run/sysh/results", 0o750, "sy"},
 		{"/run/sysh-tripwire", 0o1777, "root"},
 	}

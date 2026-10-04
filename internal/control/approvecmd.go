@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xezpeleta/sysh/internal/approval"
@@ -134,6 +135,16 @@ func cmdApprove(args []string) int {
 		fmt.Fprintf(os.Stderr, "sysh approve: request expired (age %s > TTL %s); removed\n", age.Truncate(time.Second), approval.RequestTTL)
 		return 1
 	}
+
+	// Exclusive claim: exactly one approver may drive this request.
+	// Every exit path below releases it (defer); a successful approval
+	// removes the request itself, after which the release is a no-op.
+	release, err := claimRequest(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve: %v\n", err)
+		return 1
+	}
+	defer release()
 
 	// Approval chooses when; policy chooses what. Re-load the
 	// root-owned policy and re-match the request argv — an operator
@@ -302,7 +313,45 @@ func loadRequest(id string) (approval.Request, error) {
 	if req.ID != id {
 		return approval.Request{}, fmt.Errorf("request id mismatch (file claims %s)", req.ID)
 	}
+	// The id is deterministic over (argv, key): binding name to content
+	// makes a tampered body unapprovable even before the policy re-check.
+	if want := approval.ID(req.Argv, req.KeyID); want != id {
+		return approval.Request{}, fmt.Errorf("request id does not match its content (tampered?)")
+	}
 	return req, nil
+}
+
+// claimRequest takes exclusive control of a pending request via a
+// root-owned O_EXCL marker in the drop box (the sticky bit on the box
+// keeps sy from removing it): two operators approving concurrently
+// cannot both execute — exactly one claim exists at any moment. A
+// marker stranded by a crashed approver becomes stealable once it is
+// older than the request TTL (the request itself is expired by then).
+func claimRequest(id string) (release func(), err error) {
+	mk := claimPath(id)
+	open := func() (*os.File, error) {
+		return os.OpenFile(mk, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	}
+	f, err := open()
+	if os.IsExist(err) {
+		if fi, se := os.Stat(mk); se == nil && nowFn().Sub(fi.ModTime()) > approval.RequestTTL {
+			_ = os.Remove(mk) // stale claim from a crashed approver
+			f, err = open()
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("another approver holds this request (or a crashed approve left its marker; it is stealable after %s)", approval.RequestTTL)
+	}
+	f.Close()
+	var once sync.Once
+	return func() { once.Do(func() { _ = os.Remove(mk) }) }, nil
+}
+
+// claimPath returns the approval marker path for a request id. The
+// ".claimed" suffix is not a valid request id, so markers never appear
+// in listings and the drop box sweeper ignores them.
+func claimPath(id string) string {
+	return approval.RequestPath(requestsDir, id) + ".claimed"
 }
 
 // readRequests sweeps the drop box: live requests, expired ones, and
@@ -334,6 +383,10 @@ func readRequests() (live, expired []approval.Request, errs []error) {
 		}
 		if req.ID != n {
 			errs = append(errs, fmt.Errorf("%s: claims id %s", n, req.ID))
+			continue
+		}
+		if approval.ID(req.Argv, req.KeyID) != n {
+			errs = append(errs, fmt.Errorf("%s: id does not match its content (tampered?)", n))
 			continue
 		}
 		if nowFn().Sub(req.Time) > approval.RequestTTL {

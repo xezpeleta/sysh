@@ -48,6 +48,9 @@ chmod 0644 "$ETC/authorized_keys" "$ETC/keys.map"
 
 # --- 4. volatile state now (tmpfiles.d covers future boots)
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/sysh.conf
+# tmpfiles 'd' only sets the mode at creation: fix the sticky bit on
+# upgrades of boxes created by older packages (doctor flags it too).
+chmod 1730 /run/sysh/requests 2>/dev/null || true
 
 # --- 5. auditd rules (§8.4): installed when auditd is present — the
 # pragmatic default-yes; permissive-mode policy installs refuse to
