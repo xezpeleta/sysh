@@ -325,9 +325,12 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
     </div>
     <div class="not">
       <h3>Not root-without-approval</h3>
-      <p>For unrestricted root agents, sysh is not that. Closest: permissive
-      mode on a host you consider disposable — sysh has no snapshot or
-      rollback integration.</p>
+      <p>For unrestricted root agents, sysh is not that. Root work goes
+      through sudo — but only via exact-argv sudoers grants your own
+      policy install generates; the agent invoking sudo itself is denied.
+      Closest: permissive mode — anything runs, still unprivileged — on a
+      host you consider disposable. sysh has no snapshot or rollback
+      integration.</p>
     </div>
     <div class="not">
       <h3>Not monitoring</h3>
