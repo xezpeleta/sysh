@@ -294,6 +294,15 @@ follow per host in your registry — over the same root SSH channel
 exec attempt, every decision, every pending approval, across all
 hosts, live. No daemon and no listener on any managed host; the
 journal stays the only source of truth.</p>
+<p><em class="beta-note">Beta — not yet battle-tested; the pending
+banner and the <code>sy watch</code> terminal remain the reliable
+channels.</em> Click the bell in the header and the browser asks once:
+allow notifications? Answer yes and new approval requests pop as
+native alerts — argv, key, host — that stay on screen until answered,
+like a meeting invite. Clicking one focuses the page on the pending
+panel; the ceremony itself never leaves the server. (Notifications
+need localhost or HTTPS — <code>sy watch</code> is localhost by
+design.)</p>
 
 <div class="wd-frame" id="wd">
   <div class="wd-chrome"><span class="wd-dot"></span><span class="wd-dot"></span><span class="wd-dot"></span>

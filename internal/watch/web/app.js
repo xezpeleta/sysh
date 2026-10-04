@@ -233,6 +233,102 @@ $("themeToggle").addEventListener("click", () => {
   localStorage.setItem("sywatch-theme", next);
 });
 
+// ---------- browser alerts ----------
+// Calendar-style: when a new approval request arrives, a native
+// browser notification pops — but only because the operator granted
+// the permission themselves (the browser asks; the user answers).
+// The alert carries argv and key; the ceremony stays on the server —
+// the browser remains a renderer that can look, never act.
+const bell = $("bellToggle");
+let sseGraceUntil = 0;        // replay window after (re)connect: no alerts for history
+let firstPendingPoll = true;  // baseline: what is already waiting never alerts
+const knownPending = new Set();
+let lastAlert = { key: "", at: 0 }; // dedupe between the SSE and poll paths
+
+function alertsOn() {
+  return "Notification" in window && Notification.permission === "granted"
+    && localStorage.getItem("sywatch-alerts") !== "off";
+}
+
+function bellState() {
+  if (!("Notification" in window)) {
+    bell.textContent = "🔕";
+    bell.title = "this browser does not support notifications";
+    bell.classList.add("blocked");
+    return;
+  }
+  bell.classList.remove("on", "blocked");
+  if (Notification.permission === "denied") {
+    bell.textContent = "🔕";
+    bell.title = "browser alerts blocked — allow notifications for this site in the browser settings";
+    bell.classList.add("blocked");
+    return;
+  }
+  if (alertsOn()) {
+    bell.textContent = "🔔";
+    bell.title = "browser alerts on (beta) — click to turn off";
+    bell.classList.add("on");
+    return;
+  }
+  bell.textContent = "🔕";
+  bell.title = Notification.permission === "granted"
+    ? "browser alerts off — click to turn on"
+    : "click to allow browser alerts on new approval requests (beta)";
+}
+
+bell.addEventListener("click", async () => {
+  if (!("Notification" in window) || Notification.permission === "denied") return;
+  if (Notification.permission !== "granted") {
+    await Notification.requestPermission(); // the browser asks; the user answers
+    if (Notification.permission === "granted") {
+      localStorage.setItem("sywatch-alerts", "on");
+      bellState();
+      new Notification("sy watch", {
+        body: "alerts on — new approval requests will pop here",
+        tag: "sywatch-test",
+      });
+    }
+    bellState();
+    return;
+  }
+  // granted: toggle
+  const off = localStorage.getItem("sywatch-alerts") === "off";
+  localStorage.setItem("sywatch-alerts", off ? "on" : "off");
+  bellState();
+});
+
+function alertRequest(host, key, argv, tag) {
+  // dedupe the two triggers (SSE event and pending poll) for the
+  // same request within a short window
+  const dedupe = host + " " + (argv || []).join(" ");
+  const now = Date.now();
+  if (dedupe === lastAlert.key && now - lastAlert.at < 10000) return;
+  lastAlert = { key: dedupe, at: now };
+  try {
+    const n = new Notification("sy watch — approval requested", {
+      body: (argv || []).join(" ") + "\n" + host + " · key " + key,
+      tag,
+      requireInteraction: true, // stays until answered, like a meeting invite
+    });
+    n.onclick = () => {
+      window.focus();
+      pollPending();
+      const p = $("pending");
+      if (!p.hidden) p.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      n.close();
+    };
+  } catch {} // some browsers throw on Notification constructor quirks
+}
+
+function maybeAlertFromEvent(ev) {
+  if (ev.decision !== "request") return;
+  if (Date.now() < sseGraceUntil) return; // replayed history, not news
+  if (!alertsOn()) return;
+  alertRequest(ev.host, ev.key, ev.argv, "sywatch-req-" + ev.seq);
+}
+
+bellState();
+
 // ---------- polling loops ----------
 async function pollHosts() {
   try {
@@ -245,7 +341,22 @@ async function pollHosts() {
 async function pollPending() {
   try {
     const r = await fetch("/api/pending");
-    pending = await r.json();
+    const list = await r.json();
+    // backstop for a missed SSE event: a request id that was not
+    // there on the previous poll alerts too (never on the first
+    // poll — what was already waiting when the page opened is the
+    // banner's job, not a pop-up)
+    if (!firstPendingPoll) {
+      for (const p of list) {
+        const kid = p.host + "/" + p.id;
+        if (!knownPending.has(kid) && !p.expired) {
+          alertRequest(p.host, p.key, p.argv, "sywatch-pend-" + kid);
+        }
+      }
+    }
+    for (const p of list) knownPending.add(p.host + "/" + p.id);
+    firstPendingPoll = false;
+    pending = list;
     renderPending();
   } catch {}
 }
@@ -253,8 +364,17 @@ async function pollPending() {
 // ---------- SSE ----------
 function connect() {
   const es = new EventSource("/api/events?limit=500");
+  es.onopen = () => {
+    // the first burst after (re)connecting is replayed history —
+    // give it a moment to flush before treating requests as news
+    sseGraceUntil = Date.now() + 2500;
+  };
   es.onmessage = (m) => {
-    try { appendEvent(JSON.parse(m.data)); } catch {}
+    try {
+      const ev = JSON.parse(m.data);
+      appendEvent(ev);
+      maybeAlertFromEvent(ev);
+    } catch {}
   };
   es.onerror = () => { /* EventSource auto-reconnects */ };
 }

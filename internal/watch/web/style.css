@@ -107,6 +107,21 @@ body {
   cursor: pointer;
   font-size: 13px;
 }
+.bell {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  width: 28px; height: 24px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
+.bell.on {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.bell.blocked { opacity: .45; cursor: not-allowed; }
 
 /* ---------- pending approvals ---------- */
 .pending {

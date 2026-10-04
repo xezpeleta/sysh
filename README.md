@@ -127,7 +127,11 @@ a shell.
   operator-side counterpart: one read-only `journalctl -t sysh -f`
   follow per configured host, over the same root SSH channel, rendered
   as a localhost web view — every exec attempt, decision, and pending
-  approval across all hosts, live. A pending request is one click from
+  approval across all hosts, live. A browser notification (beta;
+  opt-in via one bell click — the user grants the permission in the
+  browser) pops when a new approval request arrives — argv, key,
+  host, click to focus. The pending banner and the terminal ceremony
+  remain the reliable channels. A pending request is one click from
   answered, two ways: *approve here* runs the whole ceremony in the
   page — the argv is fetched from the server when the modal opens, a
   typed argument proves you read it, and the token touch happens
