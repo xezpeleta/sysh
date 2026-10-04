@@ -71,14 +71,16 @@ Nothing about enforcement changes when it is renamed.
 
 - **Not a sandbox.** The agent runs real commands on the real host as a real
   unprivileged user. No chroot, namespaces, or microVMs.
-- **Not unrestricted root.** Shops that want an anything-goes root agent
-  are out of scope. `sysh` root power is always a closed list of exact argv
-  the operator wrote into a `privileged` rule — never a shell, never
-  `rest`, never a pattern. For unstructured room the closest is
-  *permissive mode* (§6.6): unlimited as the unprivileged `sy` user, fully
-  recorded, on a host you treat as disposable — still not root. (Rollback,
-  if you want it, is your own hypervisor/backup practice; `sysh` has no
-  snapshot integration.)
+- **Not unrestricted root — with one loud, named exception.** `sysh`
+  root power is a closed list of exact argv the operator wrote into a
+  `privileged` rule — never a shell, never `rest`, never a pattern. For
+  unstructured room there are two honest options: *permissive mode*
+  (§6.6) — unlimited as the unprivileged `sy` user, fully recorded —
+  and *root mode* (§6.9), the explicit opt-out for total freedom on a
+  host you consider disposable. Root mode is freedom with a journal,
+  not control; `sysh` never pretends otherwise. (Rollback, if you want
+  it, is your own hypervisor/backup practice; `sysh` has no snapshot
+  integration.)
 - **Not monitoring or a SIEM.** `sysh` emits structured, attributable events
   (journal, auditd); shipping and correlating them is your existing stack's
   job.
@@ -515,6 +517,37 @@ privileged = true             # executed as root via the operator's
 The phase-1 goal, in the operator's words: *"everything works — but what
 else did it do? which files did it create or modify? which other servers
 did it touch?"*
+
+### 6.9 Root mode (the explicit opt-out)
+
+A policy may set `mode = "root"` with a mandatory per-exec `timeout`
+(1..3600 seconds). Deny rules are the only rules allowed — everything
+not denied runs **as root**: the gateway wraps each allowed argv in
+`sudo -n` through a wildcard sudoers grant (`sy ALL=(root)
+TIMEOUT=<n> NOPASSWD: ALL`) generated at install. argv[0] is still
+resolved against the fixed PATH, argv is still ASCII-checked, each
+exec still gets its scope, output cap, timeout and pre/post journal
+events with `PRIV=1`.
+
+This mode exists for one workflow: **total freedom on a custom,
+disposable host, with a record**. It is not control, and the code
+refuses to let you believe it is:
+
+- allow, `privileged`, or `approval` rules in root mode are lint
+  errors — they are meaningless when everything already runs as root;
+- install requires active auditd rules (same gate as permissive: the
+  journal is the only thing root mode still offers, so the kernel
+  source must be real);
+- `doctor` warns about root mode on every run;
+- NNP is off (sudo needs setuid) — containment is meaningless for a
+  root tree.
+
+The honest limit, stated everywhere the mode is named: **after the
+first root exec, the agent can mint access the journal never sees**
+(`useradd`, a new authorized key, a changed shell). The record is only
+as good as the agent's cooperation. Treat the host as disposable; if
+you want rollback, snapshot the VM in your hypervisor first — outside
+`sysh`.
 
 ### 8.1 Event model
 

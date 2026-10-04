@@ -238,7 +238,7 @@ func cmdDoctor(args []string) int {
 	if polInstalled {
 		if p, _, _, err := policy.Load(policyPath, 0); err == nil {
 			installedPolicy = p
-			permissive = p.Mode == policy.ModePermissive
+			permissive = p.Mode == policy.ModePermissive || p.Mode == policy.ModeRoot
 			findings := policy.Lint(p, policy.RealFS())
 			errs := 0
 			for _, f := range findings {
@@ -305,7 +305,23 @@ func cmdDoctor(args []string) int {
 
 	// --- privileged rules / sudoers grant (§6.4)
 	if installedPolicy != nil {
-		if countPrivileged(installedPolicy) > 0 {
+		if installedPolicy.Mode == policy.ModeRoot {
+			warn("policy mode", "ROOT MODE — total freedom, recording only: every allowed argv runs as root; after the first exec the agent can mint access the journal never sees; treat this host as disposable")
+			if !sudoAvailableFn() {
+				fail("sudoers grant", "root mode but sudo is not installed; execs will fail")
+			} else {
+				ok("sudoers grant", fmt.Sprintf("root mode wildcard grant, per-exec TIMEOUT=%ds", installedPolicy.Timeout))
+			}
+			want, _ := buildSudoers(installedPolicy)
+			if got, err := os.ReadFile(sudoersPath); err != nil {
+				fail("sudoers grant", fmt.Sprintf("root mode but %s is missing; re-run policy install", sudoersPath))
+			} else if string(got) != want {
+				fail("sudoers grant", fmt.Sprintf("%s does not match the installed policy; re-run policy install", sudoersPath))
+			} else {
+				ok("sudoers grant", sudoersPath+" matches policy")
+			}
+			info("NNP", "gateway runs without NoNewPrivs in root mode (sudo setuid); the agent tree is root — containment is meaningless, the journal is all that remains")
+		} else if countPrivileged(installedPolicy) > 0 {
 			if !sudoAvailableFn() {
 				fail("privileged rules", "sudo not installed but the policy has privileged rules; execs will fail")
 			} else {

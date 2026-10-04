@@ -221,6 +221,23 @@ func Lint(p *Policy, fs FS) []Finding {
 		findings = append(findings, Finding{SevInfo, -1, "permissive mode: every well-formed argv runs as the unprivileged sy user — treat the host as disposable; install refuses it without active auditd rules"})
 	}
 
+	// Root mode (§6.9): deny rules only. Every allow/approval construct
+	// is meaningless — everything not denied already runs as root.
+	if p.Mode == ModeRoot {
+		for i := range p.Rules {
+			r := &p.Rules[i]
+			if r.Deny {
+				continue
+			}
+			if r.Privileged || r.Approval {
+				findings = append(findings, Finding{SevError, i, "privileged/approval rule in root mode: everything already runs as root — approval gates nothing; write deny rules only"})
+			} else {
+				findings = append(findings, Finding{SevError, i, "allow rule in root mode is meaningless — everything not denied already runs as root; write deny rules only"})
+			}
+		}
+		findings = append(findings, Finding{SevInfo, -1, "root mode: every argv not denied runs as root via a wildcard sudoers grant — this is total freedom with a journal, not control; after the first exec the agent can mint access the journal never sees; treat the host as disposable"})
+	}
+
 	return findings
 }
 

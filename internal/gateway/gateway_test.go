@@ -593,3 +593,53 @@ func TestRunKeyExpired(t *testing.T) {
 		t.Fatalf("no-TTL key: exit %d, stderr %s", code, stderr.String())
 	}
 }
+
+// ---- root mode (§6.9): total freedom, recording only --------------------
+
+func TestRunRootMode(t *testing.T) {
+	doc := `
+version = 2
+mode = "root"
+timeout = 30
+
+[[rule]]
+argv = ["/usr/bin/rm"]
+deny = true
+`
+	cfg, rec, out, _ := testConfig(t, doc)
+
+	// allowed argv: runs as root via the wildcard sudoers grant. On a
+	// host without the grant sudo -n refuses — the argv gains nothing,
+	// and the attempt is journaled with PRIV marked.
+	code := Run(cfg, "/bin/echo freedom")
+	if code == 0 {
+		t.Fatalf("root-mode argv without the sudoers grant must not succeed (exit %d)", code)
+	}
+	var sawPriv bool
+	for _, ev := range rec.Events {
+		if ev.Privileged && ev.Decision == audit.DecisionAllow {
+			sawPriv = true
+		}
+	}
+	if !sawPriv {
+		t.Fatalf("root-mode exec must be PRIV-marked: %+v", rec.Events)
+	}
+	if !strings.Contains(out.String(), "freedom") && code != 125 {
+		t.Logf("output: %s", out.String())
+	}
+
+	// deny rules still deny — the one control that still means something
+	cfg2, rec2, _, _ := testConfig(t, doc)
+	if code := Run(cfg2, "/usr/bin/rm -rf /"); code != result.ExitDenied {
+		t.Fatalf("deny rule must hold in root mode (exit %d)", code)
+	}
+	denied := false
+	for _, ev := range rec2.Events {
+		if ev.Decision == audit.DecisionDeny {
+			denied = true
+		}
+	}
+	if !denied {
+		t.Fatal("root-mode deny must be journaled")
+	}
+}

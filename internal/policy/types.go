@@ -15,6 +15,7 @@ import (
 const (
 	ModeEnforcing  = "enforcing"
 	ModePermissive = "permissive"
+	ModeRoot       = "root" // total freedom: everything not denied runs as root, recording only
 )
 
 // Policy is the parsed TOML document (§7).
@@ -22,6 +23,7 @@ type Policy struct {
 	Version int    `toml:"version"`
 	Host    string `toml:"host"`
 	Mode    string `toml:"mode"`
+	Timeout int    `toml:"timeout"` // root mode only: per-exec bound in seconds
 	Rules   []Rule `toml:"rule"`
 }
 
@@ -59,8 +61,15 @@ func Parse(data []byte) (*Policy, error) {
 	if p.Mode == "" {
 		p.Mode = ModeEnforcing
 	}
-	if p.Mode != ModeEnforcing && p.Mode != ModePermissive {
-		return nil, fmt.Errorf("policy: mode must be %q or %q, got %q", ModeEnforcing, ModePermissive, p.Mode)
+	if p.Mode != ModeEnforcing && p.Mode != ModePermissive && p.Mode != ModeRoot {
+		return nil, fmt.Errorf("policy: mode must be %q, %q or %q, got %q", ModeEnforcing, ModePermissive, ModeRoot, p.Mode)
+	}
+	if p.Mode == ModeRoot {
+		if p.Timeout < 1 || p.Timeout > 3600 {
+			return nil, fmt.Errorf("policy: root mode requires an explicit per-exec timeout (1..3600 seconds)")
+		}
+	} else if p.Timeout != 0 {
+		return nil, fmt.Errorf("policy: timeout is a root-mode field; rules carry their own")
 	}
 	for i := range p.Rules {
 		r := &p.Rules[i]

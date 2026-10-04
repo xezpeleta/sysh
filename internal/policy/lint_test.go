@@ -346,3 +346,93 @@ func TestLintApprovalRules(t *testing.T) {
 		t.Errorf("approval-only policy must not trigger the NNP setuid scan: %v", msgs)
 	}
 }
+
+// ---- root mode (§6.9) ----------------------------------------------------
+
+func rootPol(t *testing.T, timeout int, rules ...Rule) *Policy {
+	t.Helper()
+	p := pol(ModeRoot, rules...)
+	p.Timeout = timeout
+	return p
+}
+
+func TestLintRootMode(t *testing.T) {
+	// deny-only root policy lints clean of errors, carries the honest note
+	d := Rule{Argv: []string{"/usr/bin/rm"}, Deny: true}
+	p := rootPol(t, 300, d)
+	var msgs []string
+	info := false
+	for _, f := range Lint(p, stdFS()) {
+		if f.Severity == SevError {
+			msgs = append(msgs, f.Msg)
+		}
+		if f.Severity == SevInfo && strings.Contains(f.Msg, "total freedom") {
+			info = true
+		}
+	}
+	if len(msgs) != 0 {
+		t.Errorf("deny-only root policy must lint clean: %v", msgs)
+	}
+	if !info {
+		t.Error("root mode must carry the total-freedom/disposable note")
+	}
+
+	// an allow rule in root mode is refused: meaningless
+	a := Rule{Argv: []string{"/bin/echo", "hi"}, Path: "/bin/echo"}
+	p = rootPol(t, 300, a)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "meaningless") {
+		t.Errorf("allow rule in root mode must be refused: %v", msgs)
+	}
+
+	// privileged/approval rules in root mode are refused: they gate nothing
+	priv := Rule{Argv: []string{"/usr/bin/systemctl", "restart", "nginx"}, Path: "/usr/bin/systemctl", Privileged: true, Ack: true, Timeout: 60}
+	p = rootPol(t, 300, priv)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "approval gates nothing") {
+		t.Errorf("privileged rule in root mode must be refused: %v", msgs)
+	}
+	appr := Rule{Argv: []string{"/usr/bin/systemctl", "restart", "nginx"}, Path: "/usr/bin/systemctl", Privileged: true, Approval: true, Timeout: 60}
+	p = rootPol(t, 300, appr)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "approval gates nothing") {
+		t.Errorf("approval rule in root mode must be refused: %v", msgs)
+	}
+}
+
+func TestParseRootMode(t *testing.T) {
+	// timeout is mandatory and bounded
+	doc := "version = 2\nmode = \"root\"\n"
+	if _, err := Parse([]byte(doc)); err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("root mode without timeout must be refused, got %v", err)
+	}
+	doc = "version = 2\nmode = \"root\"\ntimeout = 0\n"
+	if _, err := Parse([]byte(doc)); err == nil {
+		t.Error("timeout 0 must be refused")
+	}
+	doc = "version = 2\nmode = \"root\"\ntimeout = 7200\n"
+	if _, err := Parse([]byte(doc)); err == nil {
+		t.Error("timeout above 3600 must be refused")
+	}
+	doc = "version = 2\nmode = \"root\"\ntimeout = 300\n"
+	if _, err := Parse([]byte(doc)); err != nil {
+		t.Errorf("valid root policy must parse: %v", err)
+	}
+	// timeout outside root mode is a policy error (typo protection)
+	doc = "version = 2\ntimeout = 300\n"
+	if _, err := Parse([]byte(doc)); err == nil || !strings.Contains(err.Error(), "root-mode field") {
+		t.Errorf("timeout outside root mode must be refused, got %v", err)
+	}
+}
+
+func TestMatchRootMode(t *testing.T) {
+	// everything not denied is allowed; deny rules still hold
+	d := Rule{Argv: []string{"/usr/bin/rm"}, Deny: true}
+	c, err := Compile(rootPol(t, 300, d))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec := c.Match([]string{"/bin/echo", "hi"}); !dec.Allowed {
+		t.Error("root mode must allow non-denied argv")
+	}
+	if dec := c.Match([]string{"/usr/bin/rm", "-rf", "/"}); dec.Allowed {
+		t.Error("deny rule must still deny in root mode")
+	}
+}

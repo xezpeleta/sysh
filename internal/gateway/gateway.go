@@ -200,6 +200,9 @@ func Run(cfg Config, cmd string) int {
 	if dec.Rule != nil && dec.Rule.Timeout > 0 {
 		timeout = dec.Rule.Timeout
 	}
+	if pol.Mode == policy.ModeRoot && pol.Timeout > 0 {
+		timeout = pol.Timeout
+	}
 
 	if dec.Rule != nil && dec.Rule.Privileged && dec.Rule.Approval {
 		// Approval rules (§9) never execute in the gateway: the argv
@@ -213,6 +216,23 @@ func Run(cfg Config, cmd string) int {
 		// keep recording the agent's argv; PRIV=1 marks the elevation.
 		// The grant only exists if the operator installed this policy,
 		// and only for this exact argv — sudo refuses anything else.
+		baseEvent.Privileged = true
+		var werr error
+		argv, path, werr = wrapSudo(argv, path)
+		if werr != nil {
+			ev := withDec(baseEvent, audit.DecisionInternal)
+			ev.Detail = werr.Error()
+			return deny(result.ClassInternal, werr.Error(), result.ExitDenied, ev)
+		}
+	}
+
+	if pol.Mode == policy.ModeRoot && dec.Allowed {
+		// Root mode (§6.9): total freedom, recording only. The gateway
+		// still resolves argv[0] against the fixed PATH, journals the
+		// exact argv pre/post, bounds the exec in time and output —
+		// but every allowed argv runs as root through the wildcard
+		// sudoers grant the operator's install wrote. Everything the
+		// agent spawns past this exec is beyond the journal.
 		baseEvent.Privileged = true
 		var werr error
 		argv, path, werr = wrapSudo(argv, path)
@@ -265,6 +285,10 @@ func PolicyUsesPrivileged(policyPath string, ownerUID int) bool {
 	pol, _, _, err := policy.Load(policyPath, ownerUID)
 	if err != nil {
 		return false
+	}
+	// Root mode wraps every exec in sudo (setuid): NNP must be off.
+	if pol.Mode == policy.ModeRoot {
+		return true
 	}
 	for i := range pol.Rules {
 		r := &pol.Rules[i]

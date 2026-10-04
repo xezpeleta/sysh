@@ -249,6 +249,24 @@ setfacl -d -m u:sy:r /var/log/apache2      <span class="c"># survive logrotate</
 live connections, so it goes through the approval channel: the agent can
 only request it, a human answers.</p>
 
+<h2 id="rootmode">Root mode: total freedom, recording only</h2>
+<p>For a custom host you consider disposable, there is an explicit
+opt-out. Deny rules are the only rules; everything else runs <em>as
+root</em> through a wildcard sudoers grant the install writes:</p>
+<pre><code>version = 2
+mode    = "root"
+timeout = 300              <span class="c"># per-exec bound, seconds (required)</span>
+
+[[rule]]  argv = ["/usr/bin/rm"]     <span class="c"># prefix match: rm with any args</span>
+deny     = true</code></pre>
+<p>Every argv is still journaled, scoped, and time-bounded — but this is
+freedom with a record, not control. After the first root exec the agent
+can mint access the journal never sees: a new key, a changed shell, a
+parallel session. Install requires active auditd rules, allow rules are
+a lint error (they mean nothing here), and <code>sysh doctor</code> warns
+about root mode on every run. If you want rollback, snapshot the VM in
+your hypervisor first — outside sysh.</p>
+
 <h2 id="mcp"><span class="step">STEP 7</span>Agent harnesses: <code>sy mcp</code></h2>
 <p>The same package ships <code>sy</code>, the agent-side client. Point
 your MCP-capable harness (Pi, Claude Desktop, anything that speaks

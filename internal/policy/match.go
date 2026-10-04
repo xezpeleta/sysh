@@ -62,7 +62,9 @@ func (c *Compiled) Match(argv []string) Decision {
 		}
 	}
 
-	if c.Policy.Mode == ModePermissive {
+	// Permissive and root mode allow everything not denied; the
+	// difference is execution (root mode wraps every exec in sudo).
+	if c.Policy.Mode == ModePermissive || c.Policy.Mode == ModeRoot {
 		return Decision{Allowed: true, RuleIdx: -1}
 	}
 

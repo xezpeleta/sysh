@@ -265,7 +265,8 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
       are kernel-disabled for the whole agent tree. Root work happens only
       through operator-written <em>privileged rules</em>: pre-authorized
       exact-argv grants, or a per-exec approval a human answers by hand.
-      Both are validated at install.</p>
+      One exception, named: <code>mode&nbsp;=&nbsp;"root"</code> — total
+      freedom on a disposable host, journal intact, control gone.</p>
     </div>
     <div class="card">
       <h3>Expires its own keys</h3>
@@ -325,12 +326,12 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
     </div>
     <div class="not">
       <h3>Not root-without-approval</h3>
-      <p>For unrestricted root agents, sysh is not that. Root work goes
-      through sudo — but only via exact-argv sudoers grants your own
-      policy install generates; the agent invoking sudo itself is denied.
-      Closest: permissive mode — anything runs, still unprivileged — on a
-      host you consider disposable. sysh has no snapshot or rollback
-      integration.</p>
+      <p>Root work goes through sudo — but only via exact-argv sudoers
+      grants your own policy install generates; the agent invoking sudo
+      itself is denied. Unless you say so out loud: root mode grants
+      every allowed argv as root. That is freedom with a journal, not
+      control — after the first exec the agent can mint access the
+      journal never sees. Disposable host, no snapshot integration.</p>
     </div>
     <div class="not">
       <h3>Not monitoring</h3>
