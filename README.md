@@ -75,6 +75,12 @@ a shell.
   agent picks the outcome up read-only (`sysh-result`). There is no
   bearer token to steal, replay, or leak — and the gateway process
   tree stays under `no_new_privs`, because it never elevates.
+  For remote/headless operation, bind approval power to registered
+  approver keys instead: `sysh approver add` (FIDO2 `sk-*` keys
+  recommended — no signature without a touch), then
+  `sysh approve <id> --show` → `ssh-keygen -Y sign -n sysh-approve` →
+  `sysh approve <id> --sig`. The signature is bound to the exact
+  request bytes and the request is single-use and TTL'd.
 - **A permissive mode** for controlled experimentation: the agent
   runs anything it likes — as the unprivileged user, NNP-bit set, every
   argv journaled. Unlimited for the agent, fully recorded for you. Never
@@ -92,6 +98,12 @@ a shell.
   `sysh`).
 - **Not monitoring.** It audits its own channel with kernel-attested
   sinks; shipping and correlating events is your existing stack's job.
+- **MCP surface for agent harnesses.** The same .deb ships `sy`, an
+  agent-side client: `sy mcp` is a stdio MCP server (Pi, Claude
+  Desktop, …) with three tools — `sy_exec`, `sy_docs`, `sy_policy` —
+  dialing hosts as the unprivileged `sy` user over SSH with strict
+  known_hosts. It has no approval power: an approval-required exec
+  surfaces the request id and tells the agent to stop.
 - **Not an agent or a harness.** It works with any client that speaks SSH
   and passes an argv — scripts, CLI copilots, MCP bridges, humans.
 - **Not a replacement for human access.** Your SSH is untouched.

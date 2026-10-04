@@ -1,3 +1,22 @@
+sysh (0.4.0) unstable; urgency=medium
+
+  * Approvals: signed FIDO2-grade channel (§9).
+    - sysh approver add/list/remove: registered approver keys in
+      /etc/sysh/approvers; sk-* (hardware-backed) keys recommended,
+      software keys allowed with a warning.
+    - sysh approve --show / --sig: sign the exact request bytes with
+      ssh-keygen -Y sign (namespace sysh-approve) and submit; SSHSIG
+      verified in-process (golang.org/x/crypto/ssh) — no ssh-keygen
+      dependency on the verify path. Signature bound to the request
+      content, namespace, and a registered key; requests stay TTL'd
+      and single-use.
+  * sysh-mcp: `sy mcp` stdio MCP server (§10) for agent harnesses —
+    tools sy_exec, sy_docs, sy_policy over plain SSH as the sy user;
+    approval-required (exit 30) surfaced with the request id; no
+    approval power of any kind in tool space.
+
+ -- xezpeleta <xezpeleta@users.noreply.github.com>  Sat, 03 Oct 2026 12:00:00 +0200
+
 sysh (0.1.0) unstable; urgency=medium
 
   * Phase 1: argv-policy login shell for AI agents.

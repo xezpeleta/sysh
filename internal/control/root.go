@@ -69,6 +69,8 @@ func Main(args []string) int {
 		return cmdApprove(rest)
 	case "deny":
 		return cmdDeny(rest)
+	case "approver":
+		return cmdApprover(rest)
 	default:
 		usage()
 		return 64
@@ -76,7 +78,7 @@ func Main(args []string) int {
 }
 
 // Version of the sysh binary.
-var Version = "0.3.0-dev (phase 2: approval channel)"
+var Version = "0.4.0-dev (approval channel + signed approvals + sy mcp)"
 
 func usage() {
 	fmt.Fprint(os.Stderr, `sysh — login shell for AI agents

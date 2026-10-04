@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -24,6 +25,7 @@ import (
 	"github.com/xezpeleta/sysh/internal/approval"
 	"github.com/xezpeleta/sysh/internal/audit"
 	"github.com/xezpeleta/sysh/internal/policy"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 )
 
@@ -116,66 +118,53 @@ func cmdDeny(args []string) int {
 }
 
 func cmdApprove(args []string) int {
-	if len(args) != 1 || !approval.ValidID(args[0]) {
-		fmt.Fprintln(os.Stderr, "usage: sysh approve <request-id>")
+	// Modes: interactive (default), --show (print the exact bytes a
+	// signature must cover), --sig (verify an ssh-keygen signature from
+	// stdin instead of prompting — the FIDO2 transport, §9).
+	var mode string
+	var id string
+	for _, a := range args {
+		switch a {
+		case "--sig", "--show":
+			if mode != "" {
+				fmt.Fprintln(os.Stderr, "usage: sysh approve <request-id> [--sig|--show]")
+				return 64
+			}
+			mode = a
+		default:
+			if id != "" || !approval.ValidID(a) {
+				fmt.Fprintln(os.Stderr, "usage: sysh approve <request-id> [--sig|--show]")
+				return 64
+			}
+			id = a
+		}
+	}
+	if id == "" {
+		fmt.Fprintln(os.Stderr, "usage: sysh approve <request-id> [--sig|--show]")
 		return 64
 	}
+	switch mode {
+	case "--show":
+		return approveShow(id)
+	case "--sig":
+		return approveSigned(id)
+	}
+	// Interactive: the typed-challenge path needs a real terminal.
 	if !stdinIsTTY() {
-		fmt.Fprintln(os.Stderr, "sysh approve: stdin must be a real terminal (use ssh -t, or a console); pipes are refused")
+		fmt.Fprintln(os.Stderr, "sysh approve: stdin must be a real terminal (use ssh -t, or a console); pipes are refused (for signed approvals: --sig)")
 		return 1
 	}
-	id := args[0]
-	req, err := loadRequest(id)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "sysh approve: %v\n", err)
-		return 1
+	ctx, code := beginApproval(id)
+	if ctx == nil {
+		return code
 	}
-	if age := nowFn().Sub(req.Time); age > approval.RequestTTL {
-		_ = os.Remove(approval.RequestPath(requestsDir, id))
-		fmt.Fprintf(os.Stderr, "sysh approve: request expired (age %s > TTL %s); removed\n", age.Truncate(time.Second), approval.RequestTTL)
-		return 1
-	}
-
-	// Exclusive claim: exactly one approver may drive this request.
-	// Every exit path below releases it (defer); a successful approval
-	// removes the request itself, after which the release is a no-op.
-	release, err := claimRequest(id)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "sysh approve: %v\n", err)
-		return 1
-	}
-	defer release()
-
-	// Approval chooses when; policy chooses what. Re-load the
-	// root-owned policy and re-match the request argv — an operator
-	// cannot approve anything the policy does not authorize, no
-	// matter what the (untrusted) request file claims.
-	pol, _, _, err := policy.Load(policyPath, ownerUID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "sysh approve: policy unavailable (fail closed): %v\n", err)
-		return 1
-	}
-	compiled, err := policy.Compile(pol)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "sysh approve: policy uncompilable (fail closed): %v\n", err)
-		return 1
-	}
-	dec := compiled.Match(req.Argv)
-	if !dec.Allowed || dec.Rule == nil || !dec.Rule.Privileged || !dec.Rule.Approval || dec.Rule.Deny {
-		fmt.Fprintf(os.Stderr, "sysh approve: policy does not authorize this argv as an approval rule (rule changed since the request?) — refusing\n")
-		return 1
-	}
-
-	timeout := dec.Rule.Timeout
-	if timeout <= 0 {
-		timeout = 60
-	}
+	defer ctx.release()
 
 	// Display exactly what will run, then challenge. Pattern-chosen
 	// arguments (the only attacker-influenced content, §9) must be
 	// typed by the human; a fully literal rule needs a plain yes.
 	fmt.Printf("request %s\n  key:    %s (claimed)\n  argv:   %s\n  rule:   %d, timeout %ds\n  execute as root? [yes/no] ",
-		req.ID, req.KeyID, quoteJSON(req.Argv), dec.RuleIdx, timeout)
+		ctx.req.ID, ctx.req.KeyID, quoteJSON(ctx.req.Argv), ctx.dec.RuleIdx, ctx.timeout)
 	reader := bufio.NewReader(stdin)
 	ans, _ := reader.ReadString('\n')
 	ans = strings.TrimSpace(strings.ToLower(ans))
@@ -183,8 +172,8 @@ func cmdApprove(args []string) int {
 		fmt.Println("aborted (request stays pending)")
 		return 1
 	}
-	for _, pos := range patternPositions(dec.Rule, req.Argv) {
-		arg := req.Argv[pos]
+	for _, pos := range patternPositions(ctx.dec.Rule, ctx.req.Argv) {
+		arg := ctx.req.Argv[pos]
 		fmt.Printf("type argument %d exactly as shown (%s): ", pos, arg)
 		typed, _ := reader.ReadString('\n')
 		if strings.TrimRight(typed, "\r\n") != arg {
@@ -193,15 +182,121 @@ func cmdApprove(args []string) int {
 		}
 	}
 
-	// Pre-exec record: the approval is the elevation event.
-	emitApprovalEvent(audit.DecisionApprove, req, fmt.Sprintf("approved by operator (rule %d)", dec.RuleIdx), -1, 0)
+	return finishApproval(ctx, fmt.Sprintf("approved by operator (rule %d)", ctx.dec.RuleIdx))
+}
 
-	out := runApproved(dec.Rule.Path, req.Argv[1:], timeout, req.ID)
+// approveShow prints the exact request file bytes to stdout (hints go
+// to stderr): an operator signs precisely these bytes, and the server
+// verifies against precisely these bytes — re-marshaling could drift.
+func approveShow(id string) int {
+	req, body, err := loadRequestRaw(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve --show: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "# request %s (key %s, claimed): sign these bytes with\n", req.ID, req.KeyID)
+	fmt.Fprintf(os.Stderr, "#   ssh-keygen -Y sign -f <approver-key> -n sysh-approve <file>\n# and submit: sysh approve %s --sig < file.sig\n", req.ID)
+	os.Stdout.Write(body)
+	return 0
+}
+
+// approveSigned verifies an ssh-keygen signature over the exact
+// request bytes from a registered approver key (namespace
+// sysh-approve), then executes through the same gates as the
+// interactive path. The touch, for sk-* keys, happened on the
+// operator's device at sign time — that is the human in the loop; no
+// terminal is required here.
+func approveSigned(id string) int {
+	ctx, code := beginApproval(id)
+	if ctx == nil {
+		return code
+	}
+	defer ctx.release()
+
+	name, fp, err := verifyApprovalSignature(ctx.body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve --sig: %v (request stays pending)\n", err)
+		return 1
+	}
+	fmt.Printf("signature ok: approver %s (%s)\n", name, fp)
+	return finishApproval(ctx, fmt.Sprintf("approved by signed request, approver %s (%s, rule %d)", name, fp, ctx.dec.RuleIdx))
+}
+
+// approvalCtx carries one request through the shared approval gates.
+type approvalCtx struct {
+	req     approval.Request
+	body    []byte // exact file bytes: what a signature must cover
+	release func()
+	dec     policy.Decision
+	rule    *policy.Rule
+	timeout int
+}
+
+// beginApproval runs the shared gates: strict load with id↔content
+// binding, TTL, exclusive claim, and the policy re-check (approval
+// chooses *when*; the root-owned policy chooses *what* — an operator
+// cannot approve anything the policy does not authorize, no matter
+// what the untrusted request file claims). Returns nil + exit code on
+// refusal; the caller must defer ctx.release() on success.
+func beginApproval(id string) (*approvalCtx, int) {
+	req, body, err := loadRequestRaw(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve: %v\n", err)
+		return nil, 1
+	}
+	if age := nowFn().Sub(req.Time); age > approval.RequestTTL {
+		_ = os.Remove(approval.RequestPath(requestsDir, id))
+		fmt.Fprintf(os.Stderr, "sysh approve: request expired (age %s > TTL %s); removed\n", age.Truncate(time.Second), approval.RequestTTL)
+		return nil, 1
+	}
+
+	// Exclusive claim: exactly one approver may drive this request.
+	// Every exit path releases it; a successful approval removes the
+	// request itself, after which the release is a no-op.
+	release, err := claimRequest(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve: %v\n", err)
+		return nil, 1
+	}
+
+	pol, _, _, err := policy.Load(policyPath, ownerUID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve: policy unavailable (fail closed): %v\n", err)
+		release()
+		return nil, 1
+	}
+	compiled, err := policy.Compile(pol)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh approve: policy uncompilable (fail closed): %v\n", err)
+		release()
+		return nil, 1
+	}
+	dec := compiled.Match(req.Argv)
+	if !dec.Allowed || dec.Rule == nil || !dec.Rule.Privileged || !dec.Rule.Approval || dec.Rule.Deny {
+		fmt.Fprintf(os.Stderr, "sysh approve: policy does not authorize this argv as an approval rule (rule changed since the request?) — refusing\n")
+		release()
+		return nil, 1
+	}
+	timeout := dec.Rule.Timeout
+	if timeout <= 0 {
+		timeout = 60
+	}
+	return &approvalCtx{req: req, body: body, release: release, dec: dec, rule: dec.Rule, timeout: timeout}, 0
+}
+
+// finishApproval executes an approved request from the in-memory copy
+// it was verified against, writes the result file, consumes the
+// request, and emits the pre/post audit pair.
+func finishApproval(ctx *approvalCtx, detail string) int {
+	// Pre-exec record: the approval is the elevation event.
+	emitApprovalEvent(audit.DecisionApprove, ctx.req, detail, -1, 0)
+
+	out := runApproved(ctx.rule.Path, ctx.req.Argv[1:], ctx.timeout, ctx.req.ID)
 
 	// Result file: the agent fetches it read-only via sysh-result.
 	res := approval.Result{
-		ID:         req.ID,
-		Argv:       req.Argv,
+		ID:         ctx.req.ID,
+		Argv:       ctx.req.Argv,
 		Exit:       out.Exit,
 		DurationMS: out.DurationMS,
 		Truncated:  out.Truncated,
@@ -216,14 +311,14 @@ func cmdApprove(args []string) int {
 	} else {
 		fmt.Fprintf(os.Stderr, "sysh approve: result encode failed: %v\n", err)
 	}
-	if err := os.Remove(approval.RequestPath(requestsDir, req.ID)); err != nil {
+	if err := os.Remove(approval.RequestPath(requestsDir, ctx.req.ID)); err != nil {
 		fmt.Fprintf(os.Stderr, "sysh approve: request not removed: %v\n", err)
 	}
 
-	emitApprovalEvent(audit.DecisionApprove, req, fmt.Sprintf("approved execution finished (rule %d)", dec.RuleIdx), out.Exit, out.DurationMS)
+	emitApprovalEvent(audit.DecisionApprove, ctx.req, detail+" — execution finished", out.Exit, out.DurationMS)
 
 	fmt.Printf("executed: exit=%d in %dms; the agent fetches the outcome with: sysh-result %s\n",
-		out.Exit, out.DurationMS, req.ID)
+		out.Exit, out.DurationMS, ctx.req.ID)
 	return 0
 }
 
@@ -301,24 +396,32 @@ func (w *capWriter) Write(p []byte) (int, error) {
 
 // loadRequest reads and validates one request file (§9 hygiene).
 func loadRequest(id string) (approval.Request, error) {
+	req, _, err := loadRequestRaw(id)
+	return req, err
+}
+
+// loadRequestRaw additionally returns the exact file bytes: the
+// signature transport verifies (and the operator signs) precisely
+// these bytes, never a re-marshaled copy.
+func loadRequestRaw(id string) (approval.Request, []byte, error) {
 	path := approval.RequestPath(requestsDir, id)
 	body, err := approval.ReadFileSafe(path, approval.MaxRequestFile)
 	if err != nil {
-		return approval.Request{}, err
+		return approval.Request{}, nil, err
 	}
 	req, err := approval.ParseRequest(body)
 	if err != nil {
-		return approval.Request{}, err
+		return approval.Request{}, nil, err
 	}
 	if req.ID != id {
-		return approval.Request{}, fmt.Errorf("request id mismatch (file claims %s)", req.ID)
+		return approval.Request{}, nil, fmt.Errorf("request id mismatch (file claims %s)", req.ID)
 	}
 	// The id is deterministic over (argv, key): binding name to content
 	// makes a tampered body unapprovable even before the policy re-check.
 	if want := approval.ID(req.Argv, req.KeyID); want != id {
-		return approval.Request{}, fmt.Errorf("request id does not match its content (tampered?)")
+		return approval.Request{}, nil, fmt.Errorf("request id does not match its content (tampered?)")
 	}
-	return req, nil
+	return req, body, nil
 }
 
 // claimRequest takes exclusive control of a pending request via a
@@ -352,6 +455,77 @@ func claimRequest(id string) (release func(), err error) {
 // in listings and the drop box sweeper ignores them.
 func claimPath(id string) string {
 	return approval.RequestPath(requestsDir, id) + ".claimed"
+}
+
+// verifyApprovalSignature reads an armored ssh-keygen signature
+// (SSH SIGNATURE blob) from stdin and verifies it in-process over the
+// exact request bytes, namespace sysh-approve, against the registered
+// approver keys. Returns the matching approver name and key
+// fingerprint on success.
+//
+// Properties: the signature is bound to these exact bytes (a sig over
+// any other content fails), to this namespace (a git or other
+// protocol signature fails), and to a registered key (an unknown key
+// fails). For sk-* keys the token required a physical touch to
+// produce it. Requests are TTL'd and single-use: a captured signature
+// cannot approve anything else, nor the same request re-created later
+// (a fresh request carries a fresh timestamp, hence fresh bytes).
+func verifyApprovalSignature(body []byte) (name, fingerprint string, err error) {
+	names, err := approverNames()
+	if err != nil {
+		return "", "", fmt.Errorf("approvers dir unreadable: %v", err)
+	}
+	if len(names) == 0 {
+		return "", "", fmt.Errorf("no approvers registered (sysh approver add <name>)")
+	}
+
+	armored, err := readSignature(stdin)
+	if err != nil {
+		return "", "", err
+	}
+	sig, err := approval.ParseSSHSig([]byte(armored))
+	if err != nil {
+		return "", "", err
+	}
+
+	// The embedded signer key must be exactly one registered
+	// approver's key - matched by key bytes, not by claimed name.
+	var match string
+	for _, n := range names {
+		pub, err := os.ReadFile(approversDir + "/" + n + ".pub")
+		if err != nil {
+			continue
+		}
+		reg, _, _, _, err := ssh.ParseAuthorizedKey(pub)
+		if err != nil {
+			continue
+		}
+		if bytes.Equal(reg.Marshal(), sig.PublicKey.Marshal()) {
+			match = n
+			break
+		}
+	}
+	if match == "" {
+		return "", "", fmt.Errorf("signing key is not a registered approver")
+	}
+	if err := sig.Verify(body, approvalNamespace); err != nil {
+		return "", "", err
+	}
+	return match, ssh.FingerprintSHA256(sig.PublicKey), nil
+}
+
+// approvalNamespace is the SSHSIG signature namespace for signed
+// approvals: signatures made for any other namespace fail to verify.
+const approvalNamespace = "sysh-approve"
+
+// readSignature reads one armored ssh-keygen signature from r,
+// size-capped; parsing and structural checks happen in ParseSSHSig.
+func readSignature(r io.Reader) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(r, 1<<17)) // 128 KiB hard cap
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // readRequests sweeps the drop box: live requests, expired ones, and

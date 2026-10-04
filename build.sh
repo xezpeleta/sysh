@@ -4,7 +4,7 @@ set -eu
 
 cd "$(dirname "$0")"
 
-VERSION=${VERSION:-0.3.0}
+VERSION=${VERSION:-0.4.0~dev1}
 OUT=dist
 STAGE=$OUT/sysh-$VERSION
 
@@ -17,9 +17,16 @@ mkdir -p "$STAGE/DEBIAN" \
 
 # --- binary (static, stripped, reproducible-ish)
 CGO_ENABLED=0 GOFLAGS=-trimpath go build \
-  -ldflags "-s -w -X main.version=$VERSION" \
+  -ldflags "-s -w -X github.com/xezpeleta/sysh/internal/control.Version=$VERSION" \
   -o "$STAGE/usr/bin/sysh" ./cmd/sysh
 chmod 0755 "$STAGE/usr/bin/sysh"
+
+# sy: the agent-side client (MCP surface) — operator machines install
+# it too; on hosts it is inert (a client, not a server component).
+CGO_ENABLED=0 GOFLAGS=-trimpath go build \
+  -ldflags "-s -w -X main.version=$VERSION" \
+  -o "$STAGE/usr/bin/sy" ./cmd/sy
+chmod 0755 "$STAGE/usr/bin/sy"
 
 # --- control files
 sed "s/__VERSION__/$VERSION/" debian/control > "$STAGE/DEBIAN/control"

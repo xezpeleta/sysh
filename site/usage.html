@@ -33,7 +33,7 @@
 page</a> (Debian 12 / Ubuntu 22.04+). The package creates the <code>sy</code>
 user, installs the sshd drop-in, the tmpfiles.d entries and — if auditd is
 present — UID-scoped audit rules. No debconf, no daemon.</p>
-<pre><code><span class="p">$</span> apt install ./sysh_0.3.0_amd64.deb
+<pre><code><span class="p">$</span> apt install ./sysh_0.4.0_amd64.deb
 <span class="p">$</span> sysh doctor      <span class="c"># 0 failures, 0 warnings before you go further</span></code></pre>
 
 <h2 id="policy"><span class="step">STEP 2</span>Write the policy</h2>
@@ -111,6 +111,25 @@ holds both halves: <code>request</code> events from the agent's side,
 expire after 10 minutes, results after an hour; there is nothing to
 revoke because nothing was ever granted.</p>
 
+<p><strong>Signed approvals</strong> bind approval power to registered
+approver keys — for headless or remote operation, and for FIDO2-grade
+assurance. Register your key once (an <code>sk-*</code> hardware key
+means no signature can exist without your physical touch):</p>
+<pre><code>root@server# sysh approver add ops-yubi
+<span class="out">paste one public key line, then Ctrl-D</span>
+<span class="out">registered approver ops-yubi (sk-ssh-ed25519@openssh.com)</span></code></pre>
+<p>Then approve from anywhere, signing the exact request bytes with
+stock tooling:</p>
+<pre><code><span class="p">$</span> ssh root@server 'sysh approve req_9b3c1d5e7a42 --show' &gt; req.body
+<span class="p">$</span> ssh-keygen -Y sign -f ~/.ssh/id_ed25519_sk -n sysh-approve req.body
+<span class="p">$</span> cat req.body.sig | ssh root@server 'sysh approve req_9b3c1d5e7a42 --sig'
+<span class="out">approved by ops-yubi (SHA256:…); executed: exit=0 in 198ms</span></code></pre>
+<p>The signature is verified in-process on the server, bound to the
+request&rsquo;s exact bytes and the <code>sysh-approve</code> namespace;
+an unregistered key, a wrong file, a replayed signature — all refused,
+request stays pending. The typed-argument challenge of interactive
+approve still applies to pattern rules.</p>
+
 <h2 id="privileged"><span class="step">STEP 6</span>Root verbs: privileged rules</h2>
 <p>For work that needs root, the operator pre-authorizes <em>exact</em>
 argvs. Install generates a root-owned sudoers fragment limited to those
@@ -147,6 +166,25 @@ setfacl -d -m u:sy:r /var/log/apache2      <span class="c"># survive logrotate</
 <code>tee</code>, validate, reload — and nothing else. A full restart drops
 live connections, so it goes through the approval channel: the agent can
 only request it, a human answers.</p>
+
+<h2 id="mcp"><span class="step">STEP 7</span>Agent harnesses: <code>sy mcp</code></h2>
+<p>The same package ships <code>sy</code>, the agent-side client. Point
+your MCP-capable harness (Pi, Claude Desktop, anything that speaks
+stdio MCP) at <code>sy mcp</code> and it gets three tools:
+<code>sy_exec</code>, <code>sy_docs</code>, <code>sy_policy</code> —
+nothing more. Hosts live in an operator-edited registry
+(<code>~/.config/sy/hosts.toml</code>), connections are plain SSH as
+the unprivileged <code>sy</code> user with strict known_hosts; the
+server-side policy is the only authority. When an exec needs root
+approval, the tool result carries the request id and tells the agent
+to stop — approval power never appears in tool space.</p>
+<pre><code><span class="p">$</span> cat ~/.config/sy/hosts.toml
+<span class="out">default = "web01"
+[hosts.web01]
+address = "web01.example.net"     <span class="c"># your host</span>
+key     = "~/.config/sy/keys/web01.ed25519"</span>
+<span class="p">$</span> ssh-keyscan web01.example.net &gt;&gt; ~/.config/sy/known_hosts  <span class="c"># all key types: servers may present ecdsa first</span>
+<span class="p">$</span> echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | sy mcp</code></pre>
 
 <h2 id="record">Reading the record</h2>
 <pre><code><span class="p">$</span> journalctl -t sysh --since today    <span class="c"># every exec attempt, both phases</span>

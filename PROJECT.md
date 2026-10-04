@@ -587,8 +587,9 @@ Two mechanisms, one invariant: **root argv are a closed, root-owned list.**
   `privileged = true, approval = true` (patterns and rest allowed — the
   approver re-checks and types them; no standing sudoers grant is
   generated; the gateway stays under NNP). Approving over
-  `ssh -t root@server sysh approve req_…` is transport A; FIDO2-signed
-  and bot-relayed approvals are future transports over the same
+  `ssh -t root@server sysh approve req_…` is transport A; signed
+  approvals (`sysh approver` + `sysh approve --sig`, item 6 below) are
+  transport B; a bot-relayed transport may follow over the same
   primitive.
 
 Design principle for phase 2: **approval chooses *when*; the root-owned
@@ -650,9 +651,37 @@ type the pattern-chosen argument: nginx_
    anywhere in this design. Elevation happens only inside a root process a
    human is watching.
 
-Future (not v1): FIDO2 touch-gated approval via stock
-`ssh-keygen -Y sign/verify` over the request hash — closing the
-operator-laptop-malware residual (R1) without custom crypto.
+6. **Signed approvals (transport B, shipped).** Approval power is bound
+   to a **registered approver key**, not to whoever happens to hold a
+   root shell:
+
+   - `sysh approver add <name>` registers a public key under
+     `/etc/sysh/approvers/` (root-only; one key line per file; optioned
+     keys refused; software keys accepted with a warning, `sk-*`
+     hardware-backed keys recommended — with `sk-*`, no signature
+     exists without a physical touch on the token).
+   - `sysh approve <id> --show` prints the exact request bytes for
+     signing; the operator signs them anywhere with stock tooling:
+     `ssh-keygen -Y sign -f <key> -n sysh-approve <request-file>`, and
+     submits: `cat file.sig | ssh root@server 'sysh approve <id> --sig'`.
+   - `--sig` verifies the SSHSIG blob **in-process**
+     (`golang.org/x/crypto/ssh`; no ssh-keygen on the verify path —
+     `ssh-keygen -Y verify` proved unreliable across distro builds).
+     The signature must be over the request's exact bytes, under
+     namespace `sysh-approve`, made by a key byte-identical to a
+     registered approver's; the approver's registered name lands in the
+     audit event. Requests remain TTL'd and single-use: a captured
+     signature approves nothing else, and the same argv re-requested
+     later is a fresh request (fresh timestamp, fresh bytes) needing a
+     fresh signature.
+
+   Residual R1 (operator-laptop malware), precisely stated now: a
+   software approver key can be stolen and used to mint signatures
+   silently; an `sk-*` key cannot sign without a human touch on the
+   hardware token, which is why the registry recommends them. The
+   typed-argument challenge of transport A remains available for
+   operators without hardware tokens.
+
 
 ## 10. Laptop side: the `sy` client (`sy mcp`)
 
@@ -665,19 +694,22 @@ elevation surfaces the request id and finishes its turn.
 Hard requirements (local code-execution on the operator laptop is the risk
 here):
 
-- **Hosts come from a fixed, operator-edited registry file** — never from
+- **Hosts come from a fixed, operator-edited registry file**
+  (`~/.config/sy/hosts.toml`: address, user, per-host key) — never from
   agent input. This kills the `-oProxyCommand` argument-injection class.
-- ssh is invoked as `ssh -F <controlled config> -- sy@<host> -- <argv…>`
-  with `IdentitiesOnly`, `BatchMode`, `ClearAllForwardings`,
-  `PermitLocalCommand=no`; `sy@` is hardcoded; `--` is always used.
+- SSH is `golang.org/x/crypto/ssh` in-process: user and key come from the
+  registry entry only; **host keys are verified strictly against
+  `~/.config/sy/known_hosts`** (fail closed; populate via `ssh-keyscan`).
 - Agent-supplied argv is validated (printable ASCII, no whitespace/control
-  characters — reject rather than let ssh re-split).
+  characters — reject rather than let the remote re-split); everything
+  else is the server's call — policy decides, the client never does.
 - Exit codes and the stderr contract (§6.4) surface as structured results;
-  `approval_required` responses instruct the agent to report and stop, not
-  poll.
+  `approval_required` (exit 30) responses carry the request id and
+  instruct the agent to report and stop, not poll.
 
-`sy` runs in a different trust domain from the server package and is
-distributed separately. **Deployment requirement DR1:** the agent harness
+`sy` runs in a different trust domain from the server package. It rides
+in the same .deb (inert on hosts: a client without a hosts.toml does
+nothing), but its trust assumptions live on the operator machine. **Deployment requirement DR1:** the agent harness
 (and `sy`) runs as a **dedicated OS user on the operator machine**,
 holding only agent keys — never the operator's root SSH keys, never
 `ControlMaster`, never agent forwarding for root sessions. Without DR1 the

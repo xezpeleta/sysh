@@ -4,7 +4,8 @@ BINARY := dist/sysh
 
 ci: vet test
 	bash -n debian/postinst debian/postrm build.sh
-	./build.sh >/dev/null && dpkg-deb -I dist/sysh_0.3.0_amd64.deb >/dev/null && rm -rf dist/sysh-* && echo "ci: ok"
+	rm -f dist/sysh_*_amd64.deb
+	./build.sh >/dev/null && dpkg-deb -I dist/sysh_*_amd64.deb >/dev/null && rm -rf dist/sysh-* && echo "ci: ok"
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(BINARY) ./cmd/sysh
