@@ -945,3 +945,34 @@ hash-chained root log, dedup/TTL/lockout.
 - Independent review of the **sshd drop-in, package scripts, and auditd
   rules** — not just the Go code; that is where lockout and privilege
   mistakes live.
+
+### `sy watch` — the operator's live wall (§8 read-side)
+
+Read-only observability riding the existing trust topology, with zero
+server-side change: for each host in `hosts.toml`, one persistent
+`ssh root@host journalctl -t sysh -o json -f` follow (the same root
+channel `sy approve` uses, with reconnect/backoff) plus a periodic
+`sysh approvals --json` poll, aggregated in-memory (ring buffer) and
+served as a localhost web page — SSE live tail, host/key/decision
+filters, and a pending-approvals panel that offers the exact
+`sy approve <host> <id>` command as copy-paste.
+
+Threat-model notes:
+
+- **The browser can look, never act.** No exec, no approve, no write
+  path exists in the HTTP surface; approvals stay in the terminal
+  ceremony — the argument §9 makes: a PIN/touch prompt is blind, so
+  the display must come from the root channel and the gesture from the
+  operator — a web page can be neither).
+- **Loopback-only by default** (`--listen 127.0.0.1:7321`, non-loopback
+  values refused). argv can carry sensitive material; it does not
+  belong on a network listener.
+- **DNS-rebinding defense:** the Host header must be a localhost form
+  (localhost / 127.0.0.1 / ::1, with or without port), or the request
+  is refused — the classic attack against local web tools is a visited
+  page rebinding a hostname to 127.0.0.1 and reading the dashboard.
+- The journal remains the only source of truth; `sy watch` is a view.
+  Multiple viewers are independent followers; `journalctl -f` is
+  read-only and cheap.
+- Cosmetic, deliberate: light "paper" theme by default, terminal-dark
+  theme one click away, persisted in localStorage.

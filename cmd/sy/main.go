@@ -1,13 +1,14 @@
 // sy — the agent-side client for sysh-managed hosts (PROJECT.md §1.1,
-// §10). One binary, one mode today:
+// §10). One binary, two faces:
 //
-//	sy mcp   stdio MCP server for agent harnesses (tools: sy_exec,
-//	         sy_docs, sy_policy)
-//
-// Unprivileged by construction: it connects as the sy user over plain
-// SSH, exactly like any other agent exec; it holds no approval,
-// listing, or root power of any kind. What the host's policy allows is
-// what these tools can do — nothing more.
+//	sy mcp    stdio MCP server for agent harnesses (tools: sy_exec,
+//	          sy_docs, sy_policy) — unprivileged by construction, it
+//	          connects as the sy user over plain SSH and holds no
+//	          root power of any kind
+//	sy approve / sy approvals / sy watch
+//	          operator-side: the approval ceremony (signing gesture
+//	          in a real TTY), the pending list, and the read-only web
+//	          view of agent execs (loopback, journal is the truth)
 package main
 
 import (
@@ -27,6 +28,8 @@ func main() {
 		os.Exit(cmdApproveClient(os.Args[2:]))
 	case "approvals":
 		os.Exit(cmdApprovalsClient(os.Args[2:]))
+	case "watch":
+		os.Exit(cmdWatch(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	default:
@@ -40,4 +43,5 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  sy mcp                    stdio MCP server (sy_exec, sy_docs, sy_policy)")
 	fmt.Fprintln(os.Stderr, "  sy approve [host] <id>    operator approval ceremony (YubiKey sign + submit)")
 	fmt.Fprintln(os.Stderr, "  sy approvals [host]       list pending approval requests")
+	fmt.Fprintln(os.Stderr, "  sy watch [--listen ..]     read-only web view of agent execs across hosts")
 }

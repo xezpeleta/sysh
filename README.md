@@ -110,6 +110,14 @@ a shell.
   operator command `sy approve <id>` wraps the signing ceremony into
   one step: server-recorded argv display (over your root SSH), YubiKey
   PIN + touch, submit.
+- **A live wall of what agents are doing.** `sy watch` is the
+  operator-side counterpart: one read-only `journalctl -t sysh -f`
+  follow per configured host, over the same root SSH channel, rendered
+  as a localhost web view — every exec attempt, decision, and pending
+  approval across all hosts, live, with a copy-paste `sy approve`
+  command for what waits. No daemon and no listener on any managed
+  host; the journal stays the only source of truth and the browser can
+  look, never act.
 - **Not an agent or a harness.** It works with any client that speaks SSH
   and passes an argv — scripts, CLI copilots, MCP bridges, humans.
 - **Not a replacement for human access.** Your SSH is untouched.
@@ -284,6 +292,13 @@ The phase-2 approval queue is implemented (gateway request flow,
 deferred: the YubiKey-signed and Telegram-bot approval transports (both
 front-ends of the same `sysh approve` primitive), the seccomp read-only
 profile, and the `sysh-mcp` distribution.
+
+**Operator-side tooling lives in the `sy` client:** `sy mcp` (agent
+bridge), `sy approve` / `sy approvals` (ceremony and queue), and
+`sy watch` — the localhost, read-only web viewer that follows every
+host's sysh journal over root SSH and shows pending approvals with
+the exact command to answer them where the ceremony lives. It ships no
+`sysh`-server changes: it is pure client.
 
 ### Build & try it
 

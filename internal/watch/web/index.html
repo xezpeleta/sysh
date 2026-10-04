@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sy watch</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f1f1f'/%3E%3Ctext x='10' y='44' font-family='monospace' font-size='34'%3E%3Ctspan fill='%237ec88c'%3ES%3C/tspan%3E%3Ctspan fill='%2396b6dd'%3EY%3C/tspan%3E%3Ctspan fill='%23f0cf8e'%3E_%3C/tspan%3E%3C/text%3E%3C/svg%3E">
+</head>
+<body data-theme="light">
+<header class="top">
+  <div class="brand">
+    <span class="wordmark"><span class="w-s">sy</span> watch</span>
+    <span class="sub">what agents are doing, everywhere, right now</span>
+  </div>
+  <div class="hostbar" id="hostbar"><span class="pill idle">no hosts</span></div>
+  <div class="topright">
+    <span class="pending-count" id="pendingcount"></span>
+    <button class="theme-toggle" id="themeToggle" title="light / dark">◐</button>
+  </div>
+</header>
+
+<div class="pending" id="pending" hidden>
+  <div class="pending-head">
+    <span class="pending-title">waiting for you</span>
+    <span class="pending-note">approve where the ceremony lives — your terminal, not this page</span>
+  </div>
+  <div id="pendingrows"></div>
+</div>
+
+<div class="toolbar">
+  <input type="search" id="search" placeholder="search argv, key, host…" spellcheck="false">
+  <select id="hostfilter"><option value="">all hosts</option></select>
+  <select id="keyfilter"><option value="">all keys</option></select>
+  <div class="chips" id="decisionchips">
+    <label><input type="checkbox" value="allow" checked><span class="chip c-allow">allow</span></label>
+    <label><input type="checkbox" value="deny" checked><span class="chip c-deny">deny</span></label>
+    <label><input type="checkbox" value="request" checked><span class="chip c-request">request</span></label>
+    <label><input type="checkbox" value="approval" checked><span class="chip c-approval">approval</span></label>
+    <label><input type="checkbox" value="other" checked><span class="chip c-other">other</span></label>
+  </div>
+  <label class="autoscroll"><input type="checkbox" id="autoscroll" checked> follow</label>
+</div>
+
+<main class="tablewrap" id="tablewrap">
+  <table class="events" id="events">
+    <thead>
+      <tr><th>time</th><th>host</th><th>key</th><th class="argv">argv</th><th>decision</th><th>exit</th><th>ms</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty">waiting for events…</div>
+</main>
+
+<footer class="foot">
+  <span id="stats"></span>
+  <span class="foot-right">read-only view · journal is the source of truth · <code>localhost</code> only</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
