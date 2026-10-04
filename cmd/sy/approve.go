@@ -46,6 +46,26 @@ var (
 	sshSign = realSSHSign
 )
 
+// confirmGesture is the deliberate pause between the display and the
+// signature: with a software (passphrase-less) approver key there is no
+// PIN and no touch — the operator reading the box and typing yes is the
+// whole ceremony. Refused without a real TTY: automation cannot consent.
+var confirmGesture = realConfirmGesture
+
+func realConfirmGesture(req requestBody) bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		fmt.Fprintln(os.Stderr, "sy approve: stdin is not a terminal — the confirmation gesture cannot be skipped; run sy approve interactively")
+		return false
+	}
+	fmt.Print("authorize exactly this? type yes to sign: ")
+	var ans string
+	if n, err := fmt.Scan(&ans); n != 1 && err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(ans), "yes")
+}
+
 // realSSHExec runs `ssh root@<addr> <args…>`; stderr always streams to
 // the operator; stdout is captured when out != nil (else it streams).
 // stdin, when non-nil, feeds the remote command (--sig submission).
@@ -177,6 +197,14 @@ func cmdApproveClient(args []string) int {
 	// 2. Display what the touch will authorize. This is the trusted
 	// screen: server-recorded argv over the operator's root channel.
 	printRequestBox(req)
+
+	// 2.5 The gesture: a deliberate pause after reading the box. With
+	// sk-* keys the PIN and touch inside ssh-keygen are the gesture;
+	// with software keys this prompt is all there is.
+	if !confirmGesture(req) {
+		fmt.Fprintln(os.Stderr, "aborted (request stays pending)")
+		return 1
+	}
 
 	// 3. Sign: PIN + touch happen inside ssh-keygen, operator's terminal.
 	key := keyOverride

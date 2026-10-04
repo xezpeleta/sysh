@@ -715,7 +715,12 @@ server-recorded argv, sign with the configured approver key
 (`hosts.toml [approver] key`, typically `sk-*` — PIN and touch happen
 inside `ssh-keygen`, in the operator's terminal), and submit. The
 command recomputes the request id from the fetched content locally and
-refuses on mismatch before anything reaches the signing gesture.
+refuses on mismatch before anything reaches the signing gesture. Between
+the display and the signature sits a confirmation prompt (TTY-only,
+refused on pipes): with `sk-*` keys the PIN and touch inside
+`ssh-keygen` are the gesture, but a passphrase-less software key signs
+silently — for that case the operator typing `yes` after reading the
+server-recorded argv is the whole ceremony.
 
 Why the ceremony is operator-run and never agent-run: the FIDO2 PIN and
 touch prompts are *blind* — they authorize whatever bytes the invoking

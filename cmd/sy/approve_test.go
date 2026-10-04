@@ -29,6 +29,13 @@ func fakeBody(t *testing.T, argv []string, key string) (id string, body []byte) 
 	return id, b
 }
 
+func withYesGesture(t *testing.T, ok bool) {
+	t.Helper()
+	old := confirmGesture
+	confirmGesture = func(requestBody) bool { return ok }
+	t.Cleanup(func() { confirmGesture = old })
+}
+
 func withTestConfig(t *testing.T, extra string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -43,6 +50,7 @@ func withTestConfig(t *testing.T, extra string) {
 }
 
 func TestApproveClientFullFlow(t *testing.T) {
+	withYesGesture(t, true)
 	withTestConfig(t, "\n[approver]\nkey = \"/tmp/approver-sk\"\n")
 	id, body := fakeBody(t, []string{"/usr/sbin/reboot"}, "sy/h1")
 
@@ -103,6 +111,7 @@ func TestApproveClientHostArg(t *testing.T) {
 }
 
 func TestApproveClientRefusals(t *testing.T) {
+	withYesGesture(t, true)
 	withTestConfig(t, "\n[approver]\nkey = \"/tmp/k\"\n")
 	id, body := fakeBody(t, []string{"/usr/sbin/reboot"}, "sy/h1")
 
@@ -137,6 +146,7 @@ func TestApproveClientRefusals(t *testing.T) {
 }
 
 func TestApproveClientNoKeyConfigured(t *testing.T) {
+	withYesGesture(t, true)
 	withTestConfig(t, "")
 	id, body := fakeBody(t, []string{"/usr/bin/id"}, "sy/h1")
 	oldSSH, oldSign := sshExec, sshSign
@@ -151,6 +161,7 @@ func TestApproveClientNoKeyConfigured(t *testing.T) {
 }
 
 func TestApproveClientSignFailureSubmitsNothing(t *testing.T) {
+	withYesGesture(t, true)
 	withTestConfig(t, "\n[approver]\nkey = \"/tmp/k\"\n")
 	id, body := fakeBody(t, []string{"/usr/bin/id"}, "sy/h1")
 	oldSSH, oldSign := sshExec, sshSign
@@ -173,5 +184,27 @@ func TestApproveClientBadArgs(t *testing.T) {
 		if code := cmdApproveClient(a); code != 64 {
 			t.Errorf("args %v: want 64, got %d", a, code)
 		}
+	}
+}
+
+func TestApproveClientAbortedGesture(t *testing.T) {
+	withYesGesture(t, false)
+	withTestConfig(t, "\n[approver]\nkey = \"/tmp/k\"\n")
+	id, body := fakeBody(t, []string{"/usr/sbin/reboot"}, "sy/h1")
+	oldSSH, oldSign := sshExec, sshSign
+	sshExec = func(addr string, args []string, stdin io.Reader, out *bytes.Buffer) int {
+		if args[len(args)-1] == "--sig" {
+			t.Error("must not submit after an aborted gesture")
+		}
+		out.Write(body)
+		return 0
+	}
+	sshSign = func(key, file string) error {
+		t.Error("must not sign after an aborted gesture")
+		return nil
+	}
+	t.Cleanup(func() { sshExec, sshSign = oldSSH, oldSign })
+	if code := cmdApproveClient([]string{id}); code != 1 {
+		t.Fatalf("want exit 1, got %d", code)
 	}
 }
