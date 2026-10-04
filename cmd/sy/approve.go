@@ -301,7 +301,11 @@ func cmdApproveClient(args []string) int {
 	}
 
 	// 5. Submit; the server verifies and executes, printing the outcome.
-	return sshExec(hc.Address, []string{"sysh", "approve", id, "--sig"}, bytes.NewReader(sig), nil)
+	rc := sshExec(hc.Address, []string{"sysh", "approve", id, "--sig"}, bytes.NewReader(sig), nil)
+	if rc != 0 {
+		fmt.Fprintf(os.Stderr, "sy approve: signed with %s — if the server rejected it, this key is not registered there (sysh approver list, hosts.toml [approver] key, or -k)\n", key)
+	}
+	return rc
 }
 
 // resolveOpHost resolves the optional host argument shared by the
