@@ -30,6 +30,8 @@ func main() {
 		os.Exit(cmdApprovalsClient(os.Args[2:]))
 	case "watch":
 		os.Exit(cmdWatch(os.Args[2:]))
+	case "tail":
+		os.Exit(cmdTail(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	default:
@@ -44,4 +46,5 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  sy approve [host] <id>    operator approval ceremony (YubiKey sign + submit)")
 	fmt.Fprintln(os.Stderr, "  sy approvals [host]       list pending approval requests")
 	fmt.Fprintln(os.Stderr, "  sy watch [--listen ..]     read-only web view of agent execs across hosts")
+	fmt.Fprintln(os.Stderr, "  sy tail [host]             multiplexed live journal tail (terminal)")
 }
