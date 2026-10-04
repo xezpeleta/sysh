@@ -78,7 +78,7 @@ func Main(args []string) int {
 }
 
 // Version of the sysh binary.
-var Version = "0.4.0-dev (approval channel + signed approvals + sy mcp)"
+var Version = "0.4.0 (approval channel + signed approvals + sy mcp)"
 
 func usage() {
 	fmt.Fprint(os.Stderr, `sysh — login shell for AI agents

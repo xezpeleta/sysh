@@ -14,6 +14,14 @@ sysh (0.4.0) unstable; urgency=medium
     tools sy_exec, sy_docs, sy_policy over plain SSH as the sy user;
     approval-required (exit 30) surfaced with the request id; no
     approval power of any kind in tool space.
+  * sy client (same deb): `sy approve [host] <id>` / `sy approvals`
+    — the operator-side approval ceremony. Fetches the exact request
+    bytes from the server over the operator's root SSH channel,
+    displays the server-recorded argv, recomputes the request id
+    locally before anything reaches the signing gesture, then signs
+    (sk-* keys: insert-your-YubiKey loop + PIN + touch inside
+    ssh-keygen) and submits. A TTY-only confirmation prompt sits
+    between the display and the signature; piped stdin is refused.
 
  -- xezpeleta <xezpeleta@users.noreply.github.com>  Sat, 03 Oct 2026 12:00:00 +0200
 

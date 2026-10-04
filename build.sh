@@ -4,7 +4,7 @@ set -eu
 
 cd "$(dirname "$0")"
 
-VERSION=${VERSION:-0.4.0~dev1}
+VERSION=${VERSION:-0.4.0}
 OUT=dist
 STAGE=$OUT/sysh-$VERSION
 

@@ -682,6 +682,20 @@ type the pattern-chosen argument: nginx_
    typed-argument challenge of transport A remains available for
    operators without hardware tokens.
 
+**Future candidates (post-0.4, deliberately not shipped):**
+
+- `sy approver-init` — a one-command wizard wrapping `ssh-keygen
+  -t ed25519-sk` + `sysh approver add`, so the one-time hardware
+  setup stops being manual ceremony.
+- A **phone-passkey approval transport** (WebAuthn, hybrid/cross-device
+  from the operator's phone — no key material on the laptop). Research
+  note from w3c/webauthn#1204: on localhost the browser's origin/rpId
+  machinery does not isolate local processes, so the security boundary
+  stays exactly where it is today (registered credential + challenge
+  bound to the request bytes + the human gesture); WebAuthn would be a
+  UX and device-reach win, not a trust win. The argv display residual
+  is identical across all transports.
+
 
 ## 10. Laptop side: the `sy` client (`sy mcp`)
 
@@ -797,8 +811,13 @@ of §4.3.
   malware running *as the operator user* can drive an `ssh -t` approval
   session (a local TTY can be synthesized and fed). Mitigations: typed
   pattern-argument confirmation (§9), request dedup, lockout,
-  hash-chained root audit. Full closure = FIDO2-signed approvals (§9,
-  future).
+  hash-chained root audit. Signed approvals (§9, transport B, shipped)
+  close the signing part: with an `sk-*` approver key, no signature
+  exists without a human touch on the token. Remaining: same-user
+  malware can still *drive* a ceremony and control the display the
+  operator reads — the argv box must come from the server over the
+  operator's channel (`sy approve`), and the server-side audit trail
+  records every approved argv.
 - **R2 — approval fatigue.** Dedup, short request TTL, typed confirmation,
   lockout. Bounded, not eliminated.
 - **R3 — policy authoring errors.** The linter (patterns, paths,
