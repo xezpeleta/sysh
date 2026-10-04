@@ -57,7 +57,7 @@ strong { color: var(--text); font-weight: 600; }
   text-align: left;
   flex: none;
 }
-.logo .ls { color: #f0cf8e; }        /* the prompt dollar — pastel amber */
+.logo .ls { color: #7ec88c; }        /* the dollar — pastel green, like the old S */
 .logo .ly { color: #96b6dd; }        /* pastel blue   */
 .logo .lc {                           /* pastel amber, blinking */
   color: #f0cf8e;
