@@ -364,4 +364,6 @@ the shell speaks policy.
 
 ## License
 
-MIT — see `LICENSE`.
+GNU GPLv3 — see `LICENSE`. (The site's `pi-replay.js` is vendored
+Apache-2.0 code, which GPLv3 accommodates; its notice stays in the
+file.)
