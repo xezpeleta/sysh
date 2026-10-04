@@ -2,6 +2,7 @@ package watch
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -313,5 +314,285 @@ func TestFollowerParsesAndReconnects(t *testing.T) {
 	}
 	if calls < 2 {
 		t.Fatalf("expected reconnect, calls=%d", calls)
+	}
+}
+
+func TestApproveLaunchEndpoint(t *testing.T) {
+	hub := NewHub(16)
+	var got struct {
+		host string
+		id   string
+	}
+	srv := &Server{
+		Hub:  hub,
+		Hosts: map[string]string{"web01": "192.0.2.1:22"},
+		Pending: func() []Pending {
+			return []Pending{{Host: "web01", ID: "req_0123456789ab", Argv: []string{"/usr/bin/id"}}}
+		},
+		LaunchApprove: func(host, id string) error {
+			got.host, got.id = host, id
+			return nil
+		},
+	}
+	h := srv.Handler()
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/approve", strings.NewReader(body))
+		req.Host = "localhost"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(`{"host":"web01","id":"req_0123456789ab"}`); rec.Code != 200 {
+		t.Fatalf("valid launch: %d %s", rec.Code, rec.Body.String())
+	}
+	if got.host != "web01" || got.id != "req_0123456789ab" {
+		t.Fatalf("launcher got %s %s", got.host, got.id)
+	}
+	if rec := post(`{"host":"web01","id":"req_short"}`); rec.Code != 400 {
+		t.Fatalf("bad id: %d", rec.Code)
+	}
+	if rec := post(`{"host":"evil","id":"req_0123456789ab"}`); rec.Code != 404 {
+		t.Fatalf("unknown host: %d", rec.Code)
+	}
+	if rec := post(`{"host":"web01","id":"req_000000000000"}`); rec.Code != 404 {
+		t.Fatalf("id not pending: %d", rec.Code)
+	}
+	if rec := post(`not json`); rec.Code != 400 {
+		t.Fatalf("bad json: %d", rec.Code)
+	}
+
+	// GET on the action endpoint must not exist as a route.
+	req := httptest.NewRequest("GET", "/api/approve", nil)
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == 200 {
+		t.Fatal("GET /api/approve must not succeed")
+	}
+
+	// Host-header gate must cover the action too.
+	req = httptest.NewRequest("POST", "/api/approve", strings.NewReader(`{"host":"web01","id":"req_0123456789ab"}`))
+	req.Host = "evil.example"
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("rebind gate: %d", rec.Code)
+	}
+}
+
+func TestApproveLaunchNoSpawner(t *testing.T) {
+	srv := &Server{
+		Hub:  NewHub(4),
+		Hosts: map[string]string{"web01": "192.0.2.1:22"},
+		Pending: func() []Pending {
+			return []Pending{{Host: "web01", ID: "req_0123456789ab"}}
+		},
+		LaunchApprove: nil, // launcher unavailable → 503, copy fallback
+	}
+	h := srv.Handler()
+	req := httptest.NewRequest("POST", "/api/approve", strings.NewReader(`{"host":"web01","id":"req_0123456789ab"}`))
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no spawner: %d", rec.Code)
+	}
+}
+
+func TestValidRequestID(t *testing.T) {
+	for _, ok := range []string{"req_0123456789ab", "req_ffffffffffff"} {
+		if !ValidRequestID(ok) {
+			t.Fatalf("expected valid: %s", ok)
+		}
+	}
+	for _, bad := range []string{"", "req_0123456789a", "req_0123456789abc", "req_0123456789AB", "REQ_0123456789ab", "req_0123456789a;", "../../etc/passwd"} {
+		if ValidRequestID(bad) {
+			t.Fatalf("expected invalid: %s", bad)
+		}
+	}
+}
+
+func TestCeremonyFlow(t *testing.T) {
+	hub := NewHub(16)
+	signed := ""
+	origTTL := CeremonyTTL
+	CeremonyTTL = time.Minute
+	defer func() { CeremonyTTL = origTTL }()
+
+	srv := &Server{
+		Hub:         hub,
+		Hosts:       map[string]string{"web01": "192.0.2.1:22"},
+		Ceremonies:  NewCeremonyStore(),
+		FetchRequest: func(host, addr, id string) (*CeremonyInfo, error) {
+			return &CeremonyInfo{
+				ID: id, Host: host, Key: "sy/agent",
+				Argv: []string{"/usr/bin/systemctl", "restart", "mariadb"},
+				Body: []byte("REQUEST-BYTES"),
+			}, nil
+		},
+		SignSubmit: func(host, id string, body []byte) (string, error) {
+			signed = string(body)
+			return "approved: signed by ops-yubi", nil
+		},
+	}
+	h := srv.Handler()
+
+	post := func(path, body string, sfs string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Host = "localhost"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", sfs)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// cross-origin is rejected before anything runs
+	if rec := post("/api/ceremony", `{"host":"web01","id":"req_0123456789ab"}`, "cross-site"); rec.Code != 403 {
+		t.Fatalf("cross-site ceremony start: %d", rec.Code)
+	}
+	// missing Sec-Fetch-Site (old browser / foreign form) rejected
+	req := httptest.NewRequest("POST", "/api/ceremony", strings.NewReader(`{"host":"web01","id":"req_0123456789ab"}`))
+	req.Host = "localhost"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("no Sec-Fetch-Site: %d", rec.Code)
+	}
+	// wrong content type rejected (cross-origin forms cannot set json)
+	reqCT := httptest.NewRequest("POST", "/api/ceremony", strings.NewReader(`{"host":"web01","id":"req_0123456789ab"}`))
+	reqCT.Host = "localhost"
+	reqCT.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqCT.Header.Set("Sec-Fetch-Site", "same-origin")
+	recCT := httptest.NewRecorder()
+	h.ServeHTTP(recCT, reqCT)
+	if recCT.Code != 415 {
+		t.Fatalf("form content type: %d", recCT.Code)
+	}
+
+	// start: response carries argv and the typed-argument prompt
+	rec = post("/api/ceremony", `{"host":"web01","id":"req_0123456789ab"}`, "same-origin")
+	if rec.Code != 200 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	var c1 struct {
+		Token string   `json:"token"`
+		Argv  []string `json:"argv"`
+		Type  string   `json:"type"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &c1); err != nil {
+		t.Fatal(err)
+	}
+	if c1.Type != "mariadb" {
+		t.Fatalf("prompt = %q, want last argv element", c1.Type)
+	}
+	if len(c1.Argv) != 3 || c1.Argv[0] != "/usr/bin/systemctl" {
+		t.Fatalf("argv not echoed: %v", c1.Argv)
+	}
+
+	// confirm with the wrong typing burns the ceremony
+	bad := fmt.Sprintf(`{"host":"web01","id":"req_0123456789ab","token":%q,"typed":"nginx"}`, c1.Token)
+	if rec := post("/api/ceremony/confirm", bad, "same-origin"); rec.Code != 400 {
+		t.Fatalf("wrong typed: %d", rec.Code)
+	}
+	if signed != "" {
+		t.Fatal("signer ran after wrong typing")
+	}
+
+	// the same token cannot be replayed
+	if rec := post("/api/ceremony/confirm", bad, "same-origin"); rec.Code != 410 {
+		t.Fatalf("replayed ceremony: %d", rec.Code)
+	}
+
+	// a fresh ceremony signs the exact server-fetched bytes
+	rec = post("/api/ceremony", `{"host":"web01","id":"req_0123456789ab"}`, "same-origin")
+	var c2 struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &c2); err != nil {
+		t.Fatal(err)
+	}
+	good := fmt.Sprintf(`{"host":"web01","id":"req_0123456789ab","token":%q,"typed":"mariadb"}`, c2.Token)
+	rec = post("/api/ceremony/confirm", good, "same-origin")
+	if rec.Code != 200 {
+		t.Fatalf("confirm: %d %s", rec.Code, rec.Body.String())
+	}
+	if signed != "REQUEST-BYTES" {
+		t.Fatalf("signed %q, want the fetched bytes", signed)
+	}
+	var out map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !strings.Contains(out["result"], "ops-yubi") {
+		t.Fatalf("result passthrough: %v %v", out, err)
+	}
+}
+
+func TestCeremonyDisabled(t *testing.T) {
+	srv := &Server{Hub: NewHub(16), Hosts: map[string]string{"web01": "192.0.2.1:22"}}
+	h := srv.Handler()
+	req := httptest.NewRequest("POST", "/api/ceremony", strings.NewReader(`{"host":"web01","id":"req_0123456789ab"}`))
+	req.Host = "localhost"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 503 {
+		t.Fatalf("no FetchRequest wired: %d", rec.Code)
+	}
+}
+
+func TestCeremonyNoChallenge(t *testing.T) {
+	origTTL := CeremonyTTL
+	CeremonyTTL = time.Minute
+	defer func() { CeremonyTTL = origTTL }()
+
+	newSrv := func(skip bool) *Server {
+		return &Server{
+			Hub: NewHub(16),
+			Hosts: map[string]string{"web01": "192.0.2.1:22"},
+			Ceremonies: NewCeremonyStore(),
+			SkipChallenge: skip,
+			FetchRequest: func(host, addr, id string) (*CeremonyInfo, error) {
+				return &CeremonyInfo{ID: id, Host: host, Argv: []string{"/usr/bin/systemctl", "restart", "mariadb"}, Body: []byte("B")}, nil
+			},
+			SignSubmit: func(host, id string, body []byte) (string, error) { return "ok", nil },
+		}
+	}
+
+	run := func(srv *Server, typed string) int {
+		h := srv.Handler()
+		post := func(path, body string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest("POST", path, strings.NewReader(body))
+			req.Host = "localhost"
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			return rec
+		}
+		rec := post("/api/ceremony", `{"host":"web01","id":"req_0123456789ab"}`)
+		var c struct {
+			Token    string `json:"token"`
+			Challeng bool   `json:"challenge"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.Challeng == srv.SkipChallenge {
+			t.Fatalf("challenge flag = %v with SkipChallenge=%v", c.Challeng, srv.SkipChallenge)
+		}
+		body := fmt.Sprintf(`{"host":"web01","id":"req_0123456789ab","token":%q,"typed":%q}`, c.Token, typed)
+		return post("/api/ceremony/confirm", body).Code
+	}
+
+	// default: empty typing is refused (the challenge is on)
+	if code := run(newSrv(false), ""); code != 400 {
+		t.Fatalf("empty typing without --no-challenge: %d", code)
+	}
+	// opt-out: the touch is the only confirmation
+	if code := run(newSrv(true), ""); code != 200 {
+		t.Fatalf("empty typing with --no-challenge: %d", code)
 	}
 }

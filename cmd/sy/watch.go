@@ -31,6 +31,7 @@ func cmdWatch(args []string) int {
 	listen := watchListenDefault
 	since := "1h"
 	noOpen := false
+	noChallenge := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--listen", "-l":
@@ -49,6 +50,8 @@ func cmdWatch(args []string) int {
 			since = args[i]
 		case "--no-open":
 			noOpen = true
+		case "--no-challenge":
+			noChallenge = true
 		default:
 			fmt.Fprintf(os.Stderr, "sy watch: unknown flag %s\n", args[i])
 			return 64
@@ -89,10 +92,26 @@ func cmdWatch(args []string) int {
 		go f.Follow()
 	}
 
+	approverKey := ""
+	if hf.Approver != nil {
+		approverKey = hf.Approver.Key
+	}
+
 	poller := watch.NewApprovalPoller(hostAddrs, watchApprovalsEvery, nil)
 	go poller.Run()
 
-	srv := &watch.Server{Hub: hub, Pending: poller.Snapshot}
+	srv := &watch.Server{
+		Hub:         hub,
+		Pending:     poller.Snapshot,
+		Hosts:       hostAddrs,
+		LaunchApprove: watch.RealLaunchApprove,
+		Ceremonies:  watch.NewCeremonyStore(),
+		SkipChallenge: noChallenge,
+		FetchRequest: watch.RealFetchRequest,
+		SignSubmit: func(host, id string, body []byte) (string, error) {
+			return watch.RealSignSubmit(approverKey, host, hostAddrs[host], id, body)
+		},
+	}
 
 	fmt.Fprintf(os.Stderr, "sy watch: %d host(s), journal history %s\n", len(hostAddrs), since)
 	fmt.Fprintf(os.Stderr, "sy watch: open http://%s\n", listen)

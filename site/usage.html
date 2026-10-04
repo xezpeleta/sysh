@@ -277,17 +277,13 @@ journal stays the only source of truth.</p>
 <div class="wd-frame" id="wd">
   <div class="wd-chrome"><span class="wd-dot"></span><span class="wd-dot"></span><span class="wd-dot"></span>
     <span class="wd-url">http://127.0.0.1:7321</span>
-    <span class="wd-note">loopback only · read-only</span></div>
+    <span class="wd-note">loopback only · same-origin ceremonies</span></div>
   <div class="wd-body">
     <div class="wd-head">
       <span class="wd-brand"><b>sy</b> watch</span>
       <span class="wd-pill">web01</span><span class="wd-pill">db01</span>
       <span class="wd-count" id="wd-count"></span>
       <span class="wd-theme">◐</span>
-    </div>
-    <div class="wd-pending" id="wd-pending" hidden>
-      <div class="wd-phead">waiting for you — the ceremony lives in your terminal, not this page</div>
-      <div class="wd-prow" id="wd-prow"></div>
     </div>
     <div class="wd-toolbar">
       <span class="wd-search">search argv, key, host…</span>
@@ -298,18 +294,44 @@ journal stays the only source of truth.</p>
       <thead><tr><th>time</th><th>host</th><th>key</th><th class="wd-argv">argv</th><th>decision</th><th>exit</th></tr></thead>
       <tbody id="wd-rows"></tbody>
     </table>
+    <div class="wd-pending" id="wd-pending" hidden>
+      <div class="wd-phead">waiting for you — one click answers it</div>
+      <div class="wd-prow" id="wd-prow"></div>
+    </div>
+    <div class="wd-modal" id="wd-modal" hidden>
+      <div class="wd-modal-box">
+        <div class="wd-modal-top">
+          <span class="wd-modal-title">approval ceremony</span>
+          <span class="wd-modal-meta">web01 · req_9b3c41d07aa2 · key sy/web01</span>
+        </div>
+        <div class="wd-modal-label">the argv that will be signed — fetched from the server just now</div>
+        <div class="wd-modal-argv" id="wd-margv"></div>
+        <div class="wd-modal-note">Type the last argument to show you read it:</div>
+        <input class="wd-modal-input" id="wd-mtyped" readonly placeholder="type the last argument">
+        <div class="wd-modal-state" id="wd-mstate"></div>
+      </div>
+    </div>
   </div>
-  <div class="wd-term"><span class="wd-prompt">op@laptop$</span> <span id="wd-type"></span><span class="wd-caret" id="wd-caret"></span></div>
 </div>
 
-<p>The browser can look, never act: there is no exec, approve, or write
-path anywhere in the HTTP surface, the server binds to
-<code>127.0.0.1</code> only (non-loopback values are refused), and the
-Host header is validated against localhost forms so a visited page
-cannot DNS-rebind into your dashboard. A pending request arrives with
-its <code>sy approve</code> command as copy-paste — the signing gesture
-stays in the terminal where it belongs. For pipes and grep there is a
-terminal-native sibling:</p>
+<p>A pending request is one click from answered, two ways. <em>Approve
+here</em> runs the whole ceremony in the page: when the modal opens, the
+server fetches the argv and the exact request bytes fresh (over the
+same root SSH channel it uses to follow journals), shows them, and asks
+you to type the last argument — proof you read what you are approving.
+Only then does it run <code>ssh-keygen</code> and your token touch
+happens, exactly as in the terminal: <strong>the argv shown is the argv
+signed</strong>, and the browser is only the renderer, the way a
+terminal emulator is. <em>Run in terminal</em> opens a terminal with
+<code>sy approve</code> already running instead. The surface is
+loopback-only (non-loopback refused, Host header validated so a visited
+page cannot DNS-rebind in) and same-origin-only for ceremonies
+(<code>Sec-Fetch-Site</code> + JSON, so visited pages cannot drive one);
+there is no exec path anywhere. If the typed argument feels like too
+much ceremony, <code>sy watch --no-challenge</code> makes the touch the
+only confirmation — a real trade-off (the forced reading of the argv is
+the anti-phishing layer), so the default keeps the typing. For pipes
+and grep there is a terminal-native sibling:</p>
 <pre><code><span class="p">$</span> sy watch
 <span class="out">sy watch: 2 host(s), journal history 1h
 sy watch: open http://127.0.0.1:7321</span>
@@ -337,118 +359,7 @@ sy watch: open http://127.0.0.1:7321</span>
 </ul>
 
 
-<script>
-(function () {
-  "use strict";
-  // sy watch demo — one coherent story on loop: routine execs, one
-  // denial, one approval request answered in the operator's terminal.
-  // Nothing is left pending at rest.
-  var rows = document.getElementById("wd-rows");
-  var pending = document.getElementById("wd-pending");
-  var prow = document.getElementById("wd-prow");
-  var count = document.getElementById("wd-count");
-  var typeEl = document.getElementById("wd-type");
-  var caret = document.getElementById("wd-caret");
-  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var MAXROWS = 7;
-
-  function sleep(ms) { return new Promise(function (r) { setTimeout(r, reduced ? 0 : ms); }); }
-
-  function esc(t) {
-    return String(t).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-    });
-  }
-
-  function addRow(ev) {
-    var tr = document.createElement("tr");
-    tr.className = "wd-new";
-    var badge = '<span class="wd-badge wd-b-' + ev.d + '">' + ev.d + "</span>" +
-                (ev.priv ? '<span class="wd-badge wd-b-priv">root</span>' : "");
-    tr.innerHTML =
-      '<td class="wd-ts">' + esc(ev.t) + "</td>" +
-      '<td class="wd-host">' + esc(ev.host) + "</td>" +
-      '<td class="wd-key">' + esc(ev.key) + "</td>" +
-      '<td class="wd-argv">' + esc(ev.argv) + "</td>" +
-      "<td>" + badge + "</td>" +
-      '<td class="wd-exit">' + (ev.exit !== undefined ? esc(ev.exit) : "·") + "</td>";
-    rows.appendChild(tr);
-    while (rows.children.length > MAXROWS) rows.removeChild(rows.firstChild);
-  }
-
-  function showPending(p) {
-    pending.hidden = false;
-    count.textContent = "● 1 pending";
-    prow.innerHTML =
-      '<span class="wd-pid">' + esc(p.host) + " · " + esc(p.id) + "</span>" +
-      '<span class="wd-pargv">' + esc(p.argv) + "</span>" +
-      '<span class="wd-copy">copy: sy approve ' + esc(p.host) + " " + esc(p.id) + "</span>";
-  }
-
-  function hidePending() {
-    pending.hidden = true;
-    count.textContent = "";
-  }
-
-  async function typeCmd(cmd) {
-    typeEl.textContent = "";
-    for (var i = 0; i < cmd.length; i++) {
-      typeEl.textContent += cmd[i];
-      await sleep(34);
-    }
-    await sleep(500);
-  }
-
-  function termDone(msg) {
-    typeEl.innerHTML = msg;
-    caret.style.display = "none";
-  }
-  function termReset() {
-    typeEl.textContent = "";
-    caret.style.display = "";
-  }
-
-  var REQ = { host: "web01", id: "req_9b3c41d07aa2", argv: "/usr/bin/systemctl restart mariadb" };
-
-  async function run() {
-    for (;;) {
-      rows.innerHTML = "";
-      hidePending();
-      termReset();
-      await sleep(900);
-
-      addRow({ t: "14:02:11", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl reload apache2", d: "allow", exit: 0 });
-      await sleep(850);
-      addRow({ t: "14:02:14", host: "db01",  key: "sy/db01",  argv: "/usr/bin/pg_dump -f /var/backups/db.sql", d: "allow", exit: 0 });
-      await sleep(1000);
-      addRow({ t: "14:02:31", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl restart mariadb", d: "deny", exit: 125 });
-      await sleep(1100);
-
-      // the approval request: parked, pending, waiting for a human
-      addRow({ t: "14:02:33", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl restart mariadb", d: "request", priv: true });
-      showPending(REQ);
-
-      // the operator answers where the ceremony lives
-      await sleep(1200);
-      await typeCmd("sy approve web01 " + REQ.id);
-      await sleep(900);
-      termDone('<span class="wd-ok">✓ signature ok: ops-yubi · executed: exit=0 (198ms)</span>');
-
-      // the outcome flows back into the wall
-      await sleep(700);
-      addRow({ t: "14:03:02", host: "web01", key: "root",    argv: "/usr/bin/systemctl restart mariadb", d: "approve", priv: true });
-      await sleep(650);
-      addRow({ t: "14:03:02", host: "web01", key: "sy/web01", argv: "/usr/bin/systemctl restart mariadb", d: "result", exit: 0 });
-      hidePending();
-
-      // rest state: everything answered, nothing pending
-      await sleep(4200);
-    }
-  }
-
-  run();
-})();
-</script>
+<script src="watch-demo.js"></script>
 
 </main>
 

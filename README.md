@@ -114,10 +114,17 @@ a shell.
   operator-side counterpart: one read-only `journalctl -t sysh -f`
   follow per configured host, over the same root SSH channel, rendered
   as a localhost web view — every exec attempt, decision, and pending
-  approval across all hosts, live, with a copy-paste `sy approve`
-  command for what waits. No daemon and no listener on any managed
-  host; the journal stays the only source of truth and the browser can
-  look, never act.
+  approval across all hosts, live. A pending request is one click from
+  answered, two ways: *approve here* runs the whole ceremony in the
+  page — the argv is fetched from the server when the modal opens, a
+  typed argument proves you read it, and the token touch happens
+  inside `ssh-keygen` — and *run in terminal* opens a terminal with
+  `sy approve` already running. (`--no-challenge` drops the typed
+  argument for touch-only confirmation; the default keeps it.) The argv shown is the argv signed;
+  the browser is the renderer, like a terminal emulator. Same-origin
+  only (`Sec-Fetch-Site` + JSON), loopback-only, rate-limited; no
+  daemon and no listener on any managed host — the journal stays the
+  only source of truth.
 - **Not an agent or a harness.** It works with any client that speaks SSH
   and passes an argv — scripts, CLI copilots, MCP bridges, humans.
 - **Not a replacement for human access.** Your SSH is untouched.

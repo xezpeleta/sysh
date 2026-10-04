@@ -138,7 +138,9 @@ function renderPending() {
       <span class="pid">${esc(p.host)} · ${esc(p.id)}</span>
       <span class="pargv">${esc((p.argv || []).join(" "))}</span>
       <span class="pmeta">key=${esc(p.key)} · age ${fmtAge(p.age_sec)}${p.expired ? " · expired (refuse-by-default)" : ""}</span>
-      <button class="copybtn" data-cmd="sy approve ${esc(p.host)} ${esc(p.id)}">copy: sy approve ${esc(p.host)} ${esc(p.id.slice(0, 18))}…</button>
+      <button class="runbtn herebtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}"${p.expired ? " disabled" : ""}>✓ approve here</button>
+      <button class="runbtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}"${p.expired ? " disabled" : ""}>▸ run in terminal</button>
+      <button class="copybtn" data-cmd="sy approve ${esc(p.host)} ${esc(p.id)}">copy</button>
     </div>`;
   // live first — those are the actionable ones; expired trail after,
   // faded, as the historical record of what was never answered
@@ -146,7 +148,32 @@ function renderPending() {
     live.map(row).join("") + expired.map(row).join("");
 }
 
-document.addEventListener("click", (e) => {
+document.addEventListener("click", async (e) => {
+  const here = e.target.closest(".herebtn");
+  if (here && !here.disabled) { openCeremony(here.dataset.host, here.dataset.id); return; }
+  const run = e.target.closest(".runbtn");
+  if (run && !run.disabled) {
+    run.disabled = true;
+    run.textContent = "opening…";
+    try {
+      const r = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host: run.dataset.host, id: run.dataset.id }),
+      });
+      if (r.ok) {
+        run.textContent = "terminal opened ✓ — finish the ceremony there";
+      } else {
+        const msg = await r.text();
+        run.textContent = `✗ ${msg || "launch failed"}`;
+        setTimeout(() => { run.textContent = "▸ run in terminal"; run.disabled = false; }, 4000);
+      }
+    } catch {
+      run.textContent = "✗ cannot reach sy watch";
+      setTimeout(() => { run.textContent = "▸ run in terminal"; run.disabled = false; }, 4000);
+    }
+    return;
+  }
   const btn = e.target.closest(".copybtn");
   if (!btn) return;
   navigator.clipboard.writeText(btn.dataset.cmd).then(() => {
@@ -154,8 +181,7 @@ document.addEventListener("click", (e) => {
     btn.textContent = "copied ✓";
     setTimeout(() => {
       btn.classList.remove("copied");
-      const [_, h, id] = btn.dataset.cmd.split(" ").slice(-3);
-      btn.textContent = `copy: sy approve ${h} ${id.slice(0, 18)}…`;
+      btn.textContent = "copy";
     }, 1200);
   });
 });
@@ -239,3 +265,102 @@ pollPending();
 connect();
 setInterval(pollHosts, 5000);
 setInterval(pollPending, 5000);
+
+// ---------- in-web ceremony ----------
+// The browser is the renderer; the watch server is the ceremony:
+// it fetches the argv (fresh), shows it here, and signs the exact
+// same bytes after the typed argument. The touch happens inside
+// ssh-keygen on the server side — a PIN-requiring key says so and
+// points at the terminal.
+const ceremony = $("ceremony");
+let ceremonyCtx = null; // {host, id, token}
+
+function openCeremony(host, id) {
+  const state = $("c-state");
+  state.textContent = "fetching the request from the host…";
+  $("c-argv").textContent = "";
+  $("c-meta").textContent = "";
+  $("c-typed").value = "";
+  $("c-typed").disabled = false;
+  $("c-typed").hidden = true;   // revealed only if the challenge is on
+  $("c-note").hidden = true;
+  $("c-confirm").disabled = true;
+  ceremony.hidden = false;
+
+  fetch("/api/ceremony", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host, id }),
+  })
+    .then(async (r) => {
+      if (!r.ok) throw new Error((await r.text()) || "cannot start ceremony");
+      return r.json();
+    })
+    .then((info) => {
+      ceremonyCtx = { host, id, token: info.token, challenge: !!info.challenge };
+      $("c-argv").textContent = (info.argv || []).join(" ");
+      $("c-meta").textContent = `${info.host} · ${info.id} · key ${info.key} · age ${fmtAge(info.age)}`;
+      if (info.challenge) {
+        $("c-note").hidden = false;
+        $("c-note").textContent = "Type the last argument to show you read it:";
+        $("c-typed").hidden = false;
+        state.textContent = `type “${info.type}” to confirm you read the argv`;
+        $("c-typed").focus();
+      } else {
+        // --no-challenge: the touch is the confirmation
+        state.textContent = "";
+      }
+      $("c-confirm").disabled = false;
+    })
+    .catch((e) => {
+      state.textContent = `✗ ${e.message}`;
+      $("c-typed").disabled = true;
+    });
+}
+
+function confirmCeremony() {
+  if (!ceremonyCtx) return;
+  const typed = ceremonyCtx.challenge ? $("c-typed").value.trim() : "";
+  if (ceremonyCtx.challenge && !typed) return;
+  $("c-typed").disabled = true;
+  $("c-confirm").disabled = true;
+  const state = $("c-state");
+  state.textContent = "waiting for your token touch…";
+
+  fetch("/api/ceremony/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      host: ceremonyCtx.host,
+      id: ceremonyCtx.id,
+      token: ceremonyCtx.token,
+      typed,
+    }),
+  })
+    .then(async (r) => {
+      const text = await r.text();
+      if (!r.ok) throw new Error(text || "ceremony failed");
+      return JSON.parse(text);
+    })
+    .then((res) => {
+      state.textContent = `✓ ${res.result.trim().split("\n").pop()}`;
+      setTimeout(() => { ceremony.hidden = true; pollPending(); }, 2500);
+    })
+    .catch((e) => {
+      state.textContent = `✗ ${e.message}`;
+      $("c-typed").value = "";
+      $("c-typed").disabled = false;
+    });
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#c-confirm")) { confirmCeremony(); return; }
+  if (e.target.closest("#c-cancel") || e.target.id === "ceremony") {
+    ceremony.hidden = true;
+    ceremonyCtx = null;
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !ceremony.hidden) { ceremony.hidden = true; ceremonyCtx = null; }
+  if (e.key === "Enter" && !ceremony.hidden && ! $("c-confirm").disabled) { confirmCeremony(); }
+});

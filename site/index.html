@@ -88,6 +88,56 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
   <figcaption>an emulated agent session — allowed where the policy allows, refused where it doesn't</figcaption>
 </figure>
 
+<p class="demo-intro">
+  <strong>Now the other side of the wire.</strong> The window below is
+  emulated too, but it is the real <code>sy watch</code> surface: the
+  operator&rsquo;s localhost view of every exec attempt, every decision,
+  and every pending request, across all hosts, live. When the mariadb
+  restart comes back as a request, it is answered without leaving the
+  page — the argv is fetched from the server when the modal opens, an
+  argument is typed to prove it was read, and the operator&rsquo;s
+  YubiKey signs with one touch. The browser only rendered the ceremony.
+</p>
+<div class="wd-frame" id="wd">
+  <div class="wd-chrome"><span class="wd-dot"></span><span class="wd-dot"></span><span class="wd-dot"></span>
+    <span class="wd-url">http://127.0.0.1:7321</span>
+    <span class="wd-note">loopback only · same-origin ceremonies</span></div>
+  <div class="wd-body">
+    <div class="wd-head">
+      <span class="wd-brand"><b>sy</b> watch</span>
+      <span class="wd-pill">web01</span><span class="wd-pill">db01</span>
+      <span class="wd-count" id="wd-count"></span>
+      <span class="wd-theme">◐</span>
+    </div>
+    <div class="wd-toolbar">
+      <span class="wd-search">search argv, key, host…</span>
+      <span class="wd-chip on g">allow</span><span class="wd-chip on r">deny</span>
+      <span class="wd-chip on a">request</span><span class="wd-chip on b">approval</span>
+    </div>
+    <table class="wd-table">
+      <thead><tr><th>time</th><th>host</th><th>key</th><th class="wd-argv">argv</th><th>decision</th><th>exit</th></tr></thead>
+      <tbody id="wd-rows"></tbody>
+    </table>
+    <div class="wd-pending" id="wd-pending" hidden>
+      <div class="wd-phead">waiting for you — one click answers it</div>
+      <div class="wd-prow" id="wd-prow"></div>
+    </div>
+    <div class="wd-modal" id="wd-modal" hidden>
+      <div class="wd-modal-box">
+        <div class="wd-modal-top">
+          <span class="wd-modal-title">approval ceremony</span>
+          <span class="wd-modal-meta">web01 · req_9b3c41d07aa2 · key sy/web01</span>
+        </div>
+        <div class="wd-modal-label">the argv that will be signed — fetched from the server just now</div>
+        <div class="wd-modal-argv" id="wd-margv"></div>
+        <div class="wd-modal-note">Type the last argument to show you read it:</div>
+        <input class="wd-modal-input" id="wd-mtyped" readonly placeholder="type the last argument">
+        <div class="wd-modal-state" id="wd-mstate"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 
 <main class="wrap">
 
@@ -112,8 +162,9 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
       <div class="way-n">2</div>
       <h3>It can ask</h3>
       <p>When something needs root, the agent doesn&rsquo;t have it: the
-      request waits. You see the exact command and answer yes or no, from
-      anywhere you can SSH. Nothing runs before you answer — and a no costs
+      request waits. You see the exact command and answer it — one click
+      in <code>sy watch</code>, signed with a touch on your hardware
+      token. Nothing runs before you answer — and a no costs
       nothing.</p>
       <p class="way-use">add it when it earns trust — the restart only a human should order</p>
     </div>
@@ -131,6 +182,46 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
     Move what&rsquo;s truly boring into 3. All three run side by side — and
     every attempt, in any of them, lands in the same journal.
   </p>
+</section>
+
+<section id="ceremony">
+  <p class="kicker">The operator&rsquo;s console</p>
+  <h2>The approval ceremony, in your browser</h2>
+  <p class="section-lead">
+    A pending request used to mean a terminal. Now it is one click:
+    <em>approve here</em> runs the whole ceremony in the page — with the
+    same guarantees the terminal gives, because the rules never lived
+    in the terminal. They live on the server.
+  </p>
+  <div class="ceremony-feats">
+    <div class="cfeat">
+      <h3>the argv shown is the argv signed</h3>
+      <p>When the modal opens, the server fetches the pending request
+      and the exact bytes to sign — fresh, over the same root SSH
+      channel it uses to follow journals. The process that shows you
+      the command is the process that signs it; the browser is only
+      the renderer, the way a terminal emulator is.</p>
+    </div>
+    <div class="cfeat">
+      <h3>a typed argument, then the touch</h3>
+      <p>The modal asks you to type the last argument of the argv —
+      proof you read what you are approving; a wrong typing burns the
+      ceremony and starting over means reading it again. Then your
+      YubiKey signs inside <code>ssh-keygen</code>, touch and all: key
+      material never leaves the token. (<code>--no-challenge</code>
+      drops the typing for touch-only confirmation — the default keeps
+      it.)</p>
+    </div>
+    <div class="cfeat">
+      <h3>same-origin, loopback, journal-true</h3>
+      <p>Ceremonies refuse anything that is not this page:
+      <code>Sec-Fetch-Site</code> and JSON content type keep visited
+      websites out, the server binds to <code>127.0.0.1</code> only,
+      and no daemon or listener exists on any managed host. What was
+      actually signed lands in the journal — kernel-attested, like
+      everything else.</p>
+    </div>
+  </div>
 </section>
 
 <section id="how">
@@ -288,5 +379,6 @@ operator enumerated, validated, reloaded. The mariadb restart was refused
   <a href="https://github.com/xezpeleta/sysh/releases">releases</a>
 </footer>
 
+<script src="watch-demo.js"></script>
 </body>
 </html>

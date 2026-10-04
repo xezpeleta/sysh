@@ -954,16 +954,56 @@ server-side change: for each host in `hosts.toml`, one persistent
 channel `sy approve` uses, with reconnect/backoff) plus a periodic
 `sysh approvals --json` poll, aggregated in-memory (ring buffer) and
 served as a localhost web page — SSE live tail, host/key/decision
-filters, and a pending-approvals panel that offers the exact
-`sy approve <host> <id>` command as copy-paste.
+filters, and a pending-approvals panel with two buttons per request:
+*approve here* (the in-web ceremony) and *run in terminal* (the
+launcher), plus copy-paste of the exact `sy approve <host> <id>`.
 
 Threat-model notes:
 
-- **The browser can look, never act.** No exec, no approve, no write
-  path exists in the HTTP surface; approvals stay in the terminal
-  ceremony — the argument §9 makes: a PIN/touch prompt is blind, so
-  the display must come from the root channel and the gesture from the
-  operator — a web page can be neither).
+- **The browser can look and drive the ceremony — on the server's
+  terms.** Two actions exist on the HTTP surface, both launcher-shaped:
+
+  *Approve here* (in-web ceremony, `POST /api/ceremony[/confirm]`).
+  The invariant of the terminal ceremony is that the process that
+  shows the argv signs the bytes; here the watch server is that
+  process and the browser is only its renderer, the way gnome-terminal
+  is the renderer of `sy approve`. When the modal opens, the server
+  fetches the pending snapshot and the exact request bytes fresh (over
+  its root SSH — a channel it already holds for journal follow, so
+  signing adds no standing power to the process). The modal shows that
+  argv and demands the **last argv element typed** before anything
+  moves — an attention challenge at least as strong as the terminal's
+  typed `yes`. The confirm is one-shot: a wrong typing burns the
+  ceremony and restart means reading the argv again. Then the server
+  runs `ssh-keygen -Y sign` locally — the **token touch happens inside
+  ssh-keygen, unchanged** — and submits over the root channel.
+  A PIN-requiring (verify-required) key fails headless with an error
+  pointing at the terminal path. Operators who find the typing
+  ceremony too heavy may start `sy watch --no-challenge`: the touch
+  then becomes the only confirmation. That is a real degradation and
+  it is documented as one — against the agent nothing changes (the
+  touch is the wall either way), but the forced reading of the argv,
+  the anti-phishing layer, is gone; click fatigue is how approval
+  ceremonies rot. The default keeps the challenge.
+
+  *Run in terminal* (`POST /api/approve`) spawns a terminal emulator
+  running `sy approve <host> <id>` and nothing else.
+
+  Gates common to both: request id (`req_[0-9a-f]{12}`) and host
+  registry validated, ids must be in the pending snapshot, spawns and
+  ceremonies rate-limited (5/min), Host-header must be a localhost
+  form. The in-web ceremony additionally enforces **same-origin**:
+  `Sec-Fetch-Site: same-origin` (browser-guaranteed since 2020) plus a
+  strict JSON content type, so a visited web page cannot drive a
+  ceremony — cross-site forms and fetches die at 403/415. Against
+  same-user malware the equivalence with the terminal path is exact:
+  it can talk to loopback directly, but it can equally drive
+  `sy approve` through a synthetic TTY; in both shapes the token touch
+  is the wall, and the journal records what was actually signed. What
+  the ceremony deliberately preserves is the anti-phishing shape:
+  display == signer (no HTTP hop between what you read and what is
+  signed), and an argument you must type forces reading it — click
+  fatigue is how approval ceremonies rot.
 - **Loopback-only by default** (`--listen 127.0.0.1:7321`, non-loopback
   values refused). argv can carry sensitive material; it does not
   belong on a network listener.

@@ -52,6 +52,26 @@
   <div class="empty" id="empty">waiting for events…</div>
 </main>
 
+<div id="ceremony" class="ceremony" hidden>
+  <div class="ceremony-box" role="dialog" aria-label="approval ceremony">
+    <div class="ceremony-top">
+      <span class="ceremony-title">approval ceremony</span>
+      <span class="ceremony-meta" id="c-meta"></span>
+    </div>
+    <div class="ceremony-label">the argv that will be signed — fetched from the server just now</div>
+    <div class="ceremony-argv" id="c-argv"></div>
+    <div class="ceremony-note" id="c-note">
+      Type the last argument to show you read it:
+    </div>
+    <input id="c-typed" class="ceremony-input" autocomplete="off" spellcheck="false" placeholder="type the last argument">
+    <div class="ceremony-actions">
+      <button id="c-cancel" class="ceremony-cancel">cancel</button>
+      <button id="c-confirm" class="ceremony-confirm">sign — touch your token</button>
+    </div>
+    <div class="ceremony-state" id="c-state"></div>
+  </div>
+</div>
+
 <footer class="foot">
   <span id="stats"></span>
   <span class="foot-right">read-only view · journal is the source of truth · <code>localhost</code> only</span>
