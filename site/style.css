@@ -218,6 +218,33 @@ h2 {
 }
 .section-lead { max-width: 46rem; margin: 0 0 1.6rem; }
 
+/* ---------- the principle ---------- */
+.credo {
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 3rem 1.4rem 3.2rem;
+  text-align: center;
+}
+.credo .kicker { margin-bottom: 0.7rem; }
+.credo-line .acc { color: var(--accent); }
+.credo-line {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(1.5rem, 3.6vw, 2.1rem);
+  letter-spacing: -0.01em;
+  max-width: 40rem;
+  margin: 0 auto 1rem;
+  line-height: 1.25;
+}
+.credo-sub {
+  max-width: 42rem;
+  margin: 0 auto;
+  color: var(--secondary);
+}
+.credo-sub strong { color: var(--text); }
+
 /* pillars */
 .cards {
   display: grid;
