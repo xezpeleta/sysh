@@ -1,7 +1,7 @@
 {
  "cwd": "~/ops/web01",
- "prompt": "web01 is dropping requests under load - I suspect Apache is hitting its worker ceiling. Check the server, raise the limit if that's it, and make it live.",
- "intro": "I'll look at Apache and its error log on web01, then raise the worker ceiling through the enumerated config write and reload.",
+ "prompt": "web01 becomes web02 today, after the hardware swap. Check the network is healthy on the old box, then rename it.",
+ "intro": "I'll ping the gateway and an outside address from web01 to confirm the network is healthy, then set the new hostname.",
  "script": [
   [
    "k",
@@ -9,26 +9,6 @@
   ],
   [
    "",
-   " key"
-  ],
-  [
-   "p",
-   " ="
-  ],
-  [
-   "s",
-   " \"~/.config/sy/keys/web01.ed25519\""
-  ],
-  [
-   "p",
-   ";"
-  ],
-  [
-   "k",
-   "\nconst"
-  ],
-  [
-   "f",
    " ssh"
   ],
   [
@@ -69,23 +49,7 @@
   ],
   [
    "s",
-   " `ssh -i ${key} sy@web01.example.net '${argv}'`"
-  ],
-  [
-   "p",
-   ","
-  ],
-  [
-   "",
-   "\n  timeout"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "n",
-   " 60000"
+   " `ssh -i agent.key sy@web01.example.net '${argv}'`"
   ],
   [
    "p",
@@ -97,7 +61,7 @@
   ],
   [
    "c",
-   "\n\n// observe first \u2014 read-only rules"
+   "\n\n// network checks \u2014 read-only, the policy allows them"
   ],
   [
    "k",
@@ -105,7 +69,7 @@
   ],
   [
    "",
-   " active"
+   " gateway"
   ],
   [
    "p",
@@ -125,7 +89,7 @@
   ],
   [
    "s",
-   "\"/usr/bin/systemctl is-active apache2\""
+   "\"/usr/bin/ping -c 3 192.168.1.1\""
   ],
   [
    "p",
@@ -137,7 +101,7 @@
   ],
   [
    "",
-   " log"
+   " outside"
   ],
   [
    "p",
@@ -157,143 +121,7 @@
   ],
   [
    "s",
-   "\"/usr/bin/tail -n 40 /var/log/apache2/error.log\""
-  ],
-  [
-   "p",
-   ");"
-  ],
-  [
-   "k",
-   "\nconst"
-  ],
-  [
-   "",
-   " hits"
-  ],
-  [
-   "p",
-   " ="
-  ],
-  [
-   "f",
-   " log.split"
-  ],
-  [
-   "p",
-   "("
-  ],
-  [
-   "s",
-   "\"MaxRequestWorkers\""
-  ],
-  [
-   "p",
-   ")"
-  ],
-  [
-   "",
-   ".length"
-  ],
-  [
-   "p",
-   " -"
-  ],
-  [
-   "n",
-   " 1"
-  ],
-  [
-   "p",
-   ";"
-  ],
-  [
-   "k",
-   "\nif"
-  ],
-  [
-   "p",
-   " ("
-  ],
-  [
-   "",
-   "hits"
-  ],
-  [
-   "p",
-   " <"
-  ],
-  [
-   "n",
-   " 3"
-  ],
-  [
-   "p",
-   ")"
-  ],
-  [
-   "k",
-   " return"
-  ],
-  [
-   "p",
-   " {"
-  ],
-  [
-   "",
-   " finding"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "s",
-   " \"no worker exhaustion in the log\""
-  ],
-  [
-   "p",
-   ","
-  ],
-  [
-   "",
-   " hits"
-  ],
-  [
-   "p",
-   " };"
-  ],
-  [
-   "c",
-   "\n\n// a hunch \u2014 restarting the DB is not in the policy; sysh refuses"
-  ],
-  [
-   "k",
-   "\nconst"
-  ],
-  [
-   "",
-   " db"
-  ],
-  [
-   "p",
-   " ="
-  ],
-  [
-   "k",
-   " await"
-  ],
-  [
-   "f",
-   " ssh"
-  ],
-  [
-   "p",
-   "("
-  ],
-  [
-   "s",
-   "\"/usr/bin/systemctl restart mariadb\""
+   "\"/usr/bin/ping -c 3 1.1.1.1\""
   ],
   [
    "p",
@@ -301,7 +129,7 @@
   ],
   [
    "c",
-   "\n\n// widen the ceiling: the one Apache write the operator enumerated"
+   "\n\n// the rename \u2014 root-only, no rule in the policy allows it"
   ],
   [
    "k",
@@ -309,115 +137,7 @@
   ],
   [
    "",
-   " conf"
-  ],
-  [
-   "p",
-   " ="
-  ],
-  [
-   "s",
-   " \"# tuned by the sy agent\\n<IfModule mpm_prefork_module>\\n\""
-  ],
-  [
-   "p",
-   " +"
-  ],
-  [
-   "s",
-   "\n  \"  MaxRequestWorkers 150\\n</IfModule>\\n\""
-  ],
-  [
-   "p",
-   ";"
-  ],
-  [
-   "k",
-   "\nawait"
-  ],
-  [
-   "f",
-   " bash"
-  ],
-  [
-   "p",
-   "({"
-  ],
-  [
-   "",
-   "\n  cmd"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "s",
-   " \"cat <<'EOF' | ssh -i \""
-  ],
-  [
-   "p",
-   " +"
-  ],
-  [
-   "",
-   " key"
-  ],
-  [
-   "p",
-   " +"
-  ],
-  [
-   "s",
-   "\n    \" sy@web01.example.net '/usr/bin/tee /etc/apache2/conf-available/security.conf'\\n\""
-  ],
-  [
-   "p",
-   " +"
-  ],
-  [
-   "",
-   "\n    conf"
-  ],
-  [
-   "p",
-   " +"
-  ],
-  [
-   "s",
-   " \"EOF\""
-  ],
-  [
-   "p",
-   ","
-  ],
-  [
-   "",
-   "\n  timeout"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "n",
-   " 30000"
-  ],
-  [
-   "p",
-   ","
-  ],
-  [
-   "p",
-   "\n});"
-  ],
-  [
-   "k",
-   "\nconst"
-  ],
-  [
-   "",
-   " test"
+   " hostname"
   ],
   [
    "p",
@@ -437,7 +157,7 @@
   ],
   [
    "s",
-   "\"/usr/sbin/apache2ctl configtest\""
+   "\"/usr/bin/hostnamectl set-hostname web02.example.net\""
   ],
   [
    "p",
@@ -445,31 +165,7 @@
   ],
   [
    "k",
-   "\nif"
-  ],
-  [
-   "p",
-   " (!"
-  ],
-  [
-   "f",
-   "test.includes"
-  ],
-  [
-   "p",
-   "("
-  ],
-  [
-   "s",
-   "\"Syntax OK\""
-  ],
-  [
-   "p",
-   "))"
-  ],
-  [
-   "k",
-   " return"
+   "\n\nreturn"
   ],
   [
    "p",
@@ -477,15 +173,7 @@
   ],
   [
    "",
-   " error"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "s",
-   " \"configtest failed\""
+   " gateway"
   ],
   [
    "p",
@@ -493,87 +181,7 @@
   ],
   [
    "",
-   " test"
-  ],
-  [
-   "p",
-   " };"
-  ],
-  [
-   "c",
-   "\n\n// make it live, then verify"
-  ],
-  [
-   "k",
-   "\nawait"
-  ],
-  [
-   "f",
-   " ssh"
-  ],
-  [
-   "p",
-   "("
-  ],
-  [
-   "s",
-   "\"/usr/bin/systemctl reload apache2\""
-  ],
-  [
-   "p",
-   ");"
-  ],
-  [
-   "k",
-   "\nconst"
-  ],
-  [
-   "",
-   " after"
-  ],
-  [
-   "p",
-   " ="
-  ],
-  [
-   "k",
-   " await"
-  ],
-  [
-   "f",
-   " ssh"
-  ],
-  [
-   "p",
-   "("
-  ],
-  [
-   "s",
-   "\"/usr/bin/tail -n 20 /var/log/apache2/error.log\""
-  ],
-  [
-   "p",
-   ");"
-  ],
-  [
-   "k",
-   "\nreturn"
-  ],
-  [
-   "p",
-   " {"
-  ],
-  [
-   "",
-   " reloaded"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "",
-   " true"
+   " outside"
   ],
   [
    "p",
@@ -581,31 +189,7 @@
   ],
   [
    "",
-   " maxRequestWorkers"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "n",
-   " 150"
-  ],
-  [
-   "p",
-   ","
-  ],
-  [
-   "",
-   " deniedVerb"
-  ],
-  [
-   "p",
-   ":"
-  ],
-  [
-   "s",
-   " \"systemctl restart mariadb\""
+   " hostname"
   ],
   [
    "p",
@@ -615,62 +199,38 @@
  "calls": [
   {
    "t": 0,
-   "d": 540,
+   "d": 920,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/systemctl is-active apache2'\" }"
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/ping -c 3 192.168.1.1'\" }"
   },
   {
-   "t": 1100,
-   "d": 820,
+   "t": 1200,
+   "d": 920,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/tail -n 40 /var/log/apache2/error.log'\" }"
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/ping -c 3 1.1.1.1'\" }"
   },
   {
-   "t": 3600,
-   "d": 230,
+   "t": 2600,
+   "d": 420,
    "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/systemctl restart mariadb'\", exit: 125 }",
+   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/hostnamectl set-hostname web02.example.net'\", exit: 125 }",
    "err": true
-  },
-  {
-   "t": 5300,
-   "d": 940,
-   "name": "bash",
-   "args": "{ cmd: \"cat conf | ssh -i agent.key sy@web01 '/usr/bin/tee /etc/apache2/\u2026'\", stdin: true }"
-  },
-  {
-   "t": 7200,
-   "d": 1380,
-   "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/sbin/apache2ctl configtest'\" }"
-  },
-  {
-   "t": 9300,
-   "d": 1720,
-   "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/systemctl reload apache2'\" }"
-  },
-  {
-   "t": 11600,
-   "d": 700,
-   "name": "bash",
-   "args": "{ cmd: \"ssh -i agent.key sy@web01 '/usr/bin/tail -n 20 /var/log/apache2/error.log'\" }"
   }
  ],
- "wallMs": 12300,
- "output": "{\n  \"reloaded\": true,\n  \"maxRequestWorkers\": 150,\n  \"syntax\": \"Syntax OK\",\n  \"deniedVerb\": \"systemctl restart mariadb (exit 125)\"\n}",
+ "wallMs": 3020,
+ "output": "{\n  \"gateway\": \"192.168.1.1 - 3/3 replies, 0.4 ms\",\n  \"outside\": \"1.1.1.1 - 3/3 replies, 12.1 ms\",\n  \"hostname\": \"refused: no rule allows this argv (exit 125)\"\n}",
  "answer": [
   [
    "p",
-   "The error log showed repeated <code>server reached MaxRequestWorkers</code> - the prefork pool was saturating under load. I raised the ceiling to <b>150</b> in <code>security.conf</code>, the one Apache write the operator enumerated, validated with <code>apache2ctl configtest</code>, and reloaded. No downtime."
+   "The network is healthy: <b>zero loss</b> to the gateway (0.4&nbsp;ms) and to the outside (12&nbsp;ms). Whatever felt slow this morning, it wasn't web01."
   ],
   [
    "p",
-   "One thing I could not do: restart the database service - not in the policy, so sysh refused it with <b>exit 125</b> before anything ran."
+   "The one thing I could not do: <b>rename the host</b>. <code>hostnamectl</code> needs root, no rule in the policy allows it, and sysh refused it with <b>exit 125</b> before anything ran. A rename is an operator's call - yours, one approval in <code>sy watch</code>, signed with your token."
   ],
   [
    "p",
-   "The whole session - every allowed exec, the privileged write flagged <code>PRIV</code>, and the denial - is in the server's journal under <code>journalctl -t sysh</code>, with the key id and the full argv. I cannot erase that; you don't have to take my word for any of it."
+   "Both pings and the refusal are in the server's journal under <code>journalctl -t sysh</code>, with the key id and the full argv. I cannot erase that; you don't have to take my word for any of it."
   ]
  ]
 }
