@@ -106,7 +106,7 @@ strong { color: var(--text); font-weight: 600; }
     linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 34px 34px;
 }
-.hero .logo { font-size: clamp(0.95rem, 3.4vw, 1.5rem); margin: 0 auto 1.5rem; }
+.hero .logo { font-size: clamp(0.7rem, 2.6vw, 1.15rem); margin: 0 auto 1.5rem; }
 .hero h1 {
   font-family: var(--serif);
   font-style: italic;
