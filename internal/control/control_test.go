@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xezpeleta/sysh/internal/audit"
 	"github.com/xezpeleta/sysh/internal/policy"
 	"golang.org/x/crypto/ssh"
 )
@@ -49,8 +50,14 @@ func newTestEnv(t *testing.T) string {
 		sudoTimeoutTagFn                                                      func() bool
 		visudoCheckFn                                                         func(string) error
 		addGroupFn, delGroupFn                                                func(string, string) error
+		requestsDir, resultsDir                                               string
+		stdinIsTTY                                                            func() bool
+		runApproved                                                           func(string, []string, int, string) execOutcome
+		auditSink                                                             audit.Sink
+		nowFn                                                                 func() time.Time
 	}{etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath, sudoersPath,
-		ownerUID, stdin, lintFS, auditRulesActiveFn, sudoAvailableFn, sudoTimeoutTagFn, visudoCheckFn, addGroupFn, delGroupFn}
+		ownerUID, stdin, lintFS, auditRulesActiveFn, sudoAvailableFn, sudoTimeoutTagFn, visudoCheckFn, addGroupFn, delGroupFn,
+		requestsDir, resultsDir, stdinIsTTY, runApproved, auditSink, nowFn}
 
 	t.Cleanup(func() {
 		etcDir, authKeysPath, keysMapPath, policyPath, flagsDir, tripwirePath =
@@ -64,6 +71,11 @@ func newTestEnv(t *testing.T) string {
 		sudoTimeoutTagFn = saved.sudoTimeoutTagFn
 		visudoCheckFn = saved.visudoCheckFn
 		addGroupFn, delGroupFn = saved.addGroupFn, saved.delGroupFn
+		requestsDir, resultsDir = saved.requestsDir, saved.resultsDir
+		stdinIsTTY = saved.stdinIsTTY
+		runApproved = saved.runApproved
+		auditSink = saved.auditSink
+		nowFn = saved.nowFn
 		os.RemoveAll(base)
 	})
 
@@ -83,6 +95,16 @@ func newTestEnv(t *testing.T) string {
 	visudoCheckFn = func(string) error { return nil }
 	addGroupFn = func(string, string) error { return nil }
 	delGroupFn = func(string, string) error { return nil }
+	requestsDir = filepath.Join(base, "run", "sysh", "requests")
+	resultsDir = filepath.Join(base, "run", "sysh", "results")
+	os.MkdirAll(requestsDir, 0o755)
+	os.MkdirAll(resultsDir, 0o755)
+	stdinIsTTY = func() bool { return true }
+	runApproved = func(string, []string, int, string) execOutcome {
+		return execOutcome{Exit: 0}
+	}
+	auditSink = nil
+	nowFn = time.Now
 
 	return base
 }

@@ -25,6 +25,9 @@ const (
 	ClassBuiltin     = "builtin"                // sy-docs / sy-policy served
 	ClassInternal    = "internal_error"         // unexpected failure, fail closed
 	ClassNoInput     = "no_input"               // interactive login attempt refused
+	ClassRequest     = "approval_required"      // privileged rule needs operator approval (exit 30)
+	ClassResult      = "result"                 // sysh-result served an approved result
+	ClassNoResult    = "result_unavailable"     // no result: pending, expired, or never approved (exit 31)
 )
 
 // Exit codes (human convenience; the stderr line is authoritative).
@@ -35,6 +38,7 @@ const (
 	ExitTimeout     = 124
 	ExitDenied      = 125
 	ExitPrivileged  = 126 // privileged unavailable pre-phase-2
+	ExitNoResult    = 31  // phase 2: sysh-result found nothing
 	ExitSessionDrop = 128 // + signal number
 )
 

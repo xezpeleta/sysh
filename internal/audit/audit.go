@@ -26,6 +26,15 @@ const (
 	DecisionTimeout    = "timeout"
 	DecisionTruncated  = "output_truncated"
 	DecisionInternal   = "internal"
+
+	// Phase 2 (§9): the approval channel. request = the gateway parked
+	// a privileged exec pending operator approval; approve/reject =
+	// the operator's root-side decision; result = the agent fetched an
+	// approved outcome. Root-side events carry the requesting key id.
+	DecisionRequest = "request"
+	DecisionApprove = "approve"
+	DecisionReject  = "reject"
+	DecisionResult  = "result"
 )
 
 // Event is one structured exec-attempt record (§8.1).

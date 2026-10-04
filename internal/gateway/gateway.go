@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xezpeleta/sysh/internal/approval"
 	"github.com/xezpeleta/sysh/internal/audit"
 	"github.com/xezpeleta/sysh/internal/policy"
 	"github.com/xezpeleta/sysh/internal/result"
@@ -50,7 +51,9 @@ type Config struct {
 	DocsDir     string
 	Tripwire    string
 	HomeDir     string
-	PolicyOwner int // uid that must own the policy (0 in production)
+	RequestsDir string // phase-2 approval drop box (default /run/sysh/requests)
+	ResultsDir  string // phase-2 results (default /run/sysh/results)
+	PolicyOwner int    // uid that must own the policy (0 in production)
 	Sink        audit.Sink
 	Scopes      bool // enable systemd-run --user scopes (auto-probed)
 	Stdin       io.Reader
@@ -68,6 +71,8 @@ func ProdConfig() Config {
 		DocsDir:     ProdDocsDir,
 		Tripwire:    ProdTripwire,
 		HomeDir:     ProdHome,
+		RequestsDir: approval.RequestsDir,
+		ResultsDir:  approval.ResultsDir,
 		Sink:        audit.JournalSink{},
 		Scopes:      UserBusAvailable(os.Getenv),
 		PolicyOwner: 0,
@@ -151,8 +156,7 @@ func Run(cfg Config, cmd string) int {
 		return runBuiltin(cfg, emit, argv, baseEvent)
 	}
 	if argv[0] == "sysh-result" {
-		return deny(result.ClassPrivileged, "sysh-result requires phase 2 (not yet available)",
-			result.ExitPrivileged, withDec(baseEvent, audit.DecisionPrivileged))
+		return serveResult(cfg, emit, ident, argv, baseEvent)
 	}
 
 	dec := compiled.Match(argv)
@@ -185,6 +189,12 @@ func Run(cfg Config, cmd string) int {
 	timeout := DefaultTimeoutSec
 	if dec.Rule != nil && dec.Rule.Timeout > 0 {
 		timeout = dec.Rule.Timeout
+	}
+
+	if dec.Rule != nil && dec.Rule.Privileged && dec.Rule.Approval {
+		// Approval rules (§9) never execute in the gateway: the argv
+		// is parked in the drop box for a root-side human decision.
+		return requestApproval(cfg, emit, ident, argv, dec, baseEvent)
 	}
 
 	if dec.Rule != nil && dec.Rule.Privileged {
@@ -247,7 +257,11 @@ func PolicyUsesPrivileged(policyPath string, ownerUID int) bool {
 		return false
 	}
 	for i := range pol.Rules {
-		if pol.Rules[i].Privileged && !pol.Rules[i].Deny {
+		r := &pol.Rules[i]
+		// Approval rules never elevate in the gateway (the root-side
+		// approver executes them, not this process tree), so they do
+		// not require NNP off.
+		if r.Privileged && !r.Deny && !r.Approval {
 			return true
 		}
 	}

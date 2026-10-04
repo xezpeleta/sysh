@@ -63,6 +63,12 @@ func Main(args []string) int {
 		return cmdLockdown(rest)
 	case "journal-group":
 		return cmdJournalGroup(rest)
+	case "approvals":
+		return cmdApprovals(rest)
+	case "approve":
+		return cmdApprove(rest)
+	case "deny":
+		return cmdDeny(rest)
 	default:
 		usage()
 		return 64
@@ -70,7 +76,7 @@ func Main(args []string) int {
 }
 
 // Version of the sysh binary.
-var Version = "0.1.0 (phase 1)"
+var Version = "0.3.0-dev (phase 2: approval channel)"
 
 func usage() {
 	fmt.Fprint(os.Stderr, `sysh — login shell for AI agents
@@ -87,6 +93,9 @@ usage:
   sysh lockdown clear              clear the tripwire
   sysh lockdown status
   sysh journal-group enable|disable  read-only journal group opt-in for sy
+  sysh approvals [--json]            list pending approval requests
+  sysh approve <request-id>          approve and execute a request (needs a TTY)
+  sysh deny <request-id>             reject a request
   sysh version
 `)
 }

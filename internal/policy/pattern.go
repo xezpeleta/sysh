@@ -25,6 +25,10 @@ const metaChars = `\|()[]{}*+?`
 // isPattern reports whether s contains grammar metacharacters.
 func isPattern(s string) bool { return hasMeta(s) }
 
+// IsPattern is the exported form: the root-side approver uses it to
+// find the pattern-chosen positions an operator must type out (§9).
+func IsPattern(s string) bool { return isPattern(s) }
+
 func hasMeta(s string) bool {
 	for i := 0; i < len(s); i++ {
 		for j := 0; j < len(metaChars); j++ {

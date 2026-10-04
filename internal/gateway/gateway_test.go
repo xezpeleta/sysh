@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xezpeleta/sysh/internal/approval"
 	"github.com/xezpeleta/sysh/internal/audit"
+	"github.com/xezpeleta/sysh/internal/result"
 )
 
 // testConfig builds a Config wired to a temp policy environment.
@@ -271,16 +274,147 @@ func TestRunBuiltinSyDocs(t *testing.T) {
 	}
 }
 
-func TestRunResultStub(t *testing.T) {
+func TestRunResultNoResult(t *testing.T) {
 	cfg, _, _, stderr := testConfig(t, execPolicy)
-	code := Run(cfg, "sysh-result 123")
-	if code != 126 {
-		t.Fatalf("exit %d, want 126", code)
+	cfg.ResultsDir = filepath.Join(cfg.HomeDir, "results")
+	code := Run(cfg, "sysh-result req_0123456789ab")
+	if code != result.ExitNoResult {
+		t.Fatalf("exit %d, want %d", code, result.ExitNoResult)
 	}
-	if !strings.Contains(stderr.String(), `"class":"privileged_unavailable"`) {
+	if !strings.Contains(stderr.String(), `"class":"result_unavailable"`) {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+	// malformed id: usage refusal, same class
+	code = Run(cfg, "sysh-result nonsense")
+	if code != result.ExitNoResult {
+		t.Fatalf("exit %d, want %d", code, result.ExitNoResult)
+	}
+}
+
+func TestRunResultFetch(t *testing.T) {
+	cfg, _, stdout, stderr := testConfig(t, execPolicy)
+	dir := filepath.Join(cfg.HomeDir, "results")
+	os.MkdirAll(dir, 0o755)
+	res := approval.Result{
+		ID: "req_0123456789ab", Argv: []string{"/bin/echo", "hi"},
+		Exit: 7, Stdout: "captured output\n",
+	}
+	body, _ := json.Marshal(res)
+	if err := os.WriteFile(filepath.Join(dir, res.ID), body, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ResultsDir = dir
+	code := Run(cfg, "sysh-result req_0123456789ab")
+	if code != 7 {
+		t.Fatalf("exit %d, want 7 (child exit passes through)", code)
+	}
+	if !strings.Contains(stdout.String(), "captured output") {
+		t.Fatalf("stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `"class":"result"`) {
 		t.Fatalf("stderr: %s", stderr.String())
 	}
 }
+
+func TestRunApprovalRequest(t *testing.T) {
+	doc := `
+version = 2
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "[a-z][a-z0-9\\-]*"]
+path = "/usr/bin/systemctl"
+timeout = 30
+privileged = true
+approval = true
+
+[[rule]]
+argv = ["/usr/sbin/reboot"]
+path = "/usr/sbin/reboot"
+timeout = 30
+privileged = true
+approval = true
+ack = true
+`
+	cfg, rec, _, stderr := testConfig(t, doc)
+	reqDir := filepath.Join(cfg.HomeDir, "requests")
+	os.MkdirAll(reqDir, 0o755)
+	cfg.RequestsDir = reqDir
+
+	code := Run(cfg, "/usr/bin/systemctl restart nginx")
+	if code != result.ExitApproval {
+		t.Fatalf("exit %d, want %d; stderr: %s", code, result.ExitApproval, stderr.String())
+	}
+	line := stderr.String()
+	if !strings.Contains(line, `"class":"approval_required"`) {
+		t.Fatalf("stderr: %s", line)
+	}
+	var rl result.Line
+	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &rl); err != nil {
+		t.Fatal(err)
+	}
+	if !approval.ValidID(rl.RequestID) {
+		t.Fatalf("request id %q not well-formed", rl.RequestID)
+	}
+	// request file exists with the claimed argv
+	body, err := approval.ReadFileSafe(filepath.Join(reqDir, rl.RequestID), 1<<16)
+	if err != nil {
+		t.Fatalf("request file: %v", err)
+	}
+	req, err := approval.ParseRequest(body)
+	if err != nil {
+		t.Fatalf("request parse: %v", err)
+	}
+	if len(req.Argv) != 3 || req.Argv[2] != "nginx" {
+		t.Fatalf("request argv: %v", req.Argv)
+	}
+	// audit: one request event
+	n := 0
+	for _, ev := range rec.Events {
+		if ev.Decision == audit.DecisionRequest {
+			n++
+			if !ev.Privileged {
+				t.Fatal("request event not marked privileged")
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("got %d request events, want 1", n)
+	}
+
+	// identical request dedupes to the same id
+	stderr.Reset()
+	code = Run(cfg, "/usr/bin/systemctl restart nginx")
+	if code != result.ExitApproval {
+		t.Fatalf("second exit %d", code)
+	}
+	var rl2 result.Line
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stderr.String())), &rl2); err != nil {
+		t.Fatal(err)
+	}
+	if rl2.RequestID != rl.RequestID {
+		t.Fatalf("dedupe failed: %s vs %s", rl2.RequestID, rl.RequestID)
+	}
+	// audit fail-closed: no record, no request
+	cfg2, rec2, _, _ := testConfig(t, doc)
+	cfg2.RequestsDir = reqDir
+	cfg2.Sink = failSink{}
+	if code := Run(cfg2, "/usr/bin/systemctl restart nginx"); code != result.ExitDenied {
+		t.Fatalf("fail-closed exit %d, want denied", code)
+	}
+	if len(rec2.Events) != 0 && rec2.Events[0].Decision != audit.DecisionInternal {
+		// internal event is fine; no request event may exist
+		for _, ev := range rec2.Events {
+			if ev.Decision == audit.DecisionRequest {
+				t.Fatal("request event emitted despite sink failure")
+			}
+		}
+	}
+}
+
+type failSink struct{}
+
+func (failSink) Emit(ev audit.Event) error { return fmt.Errorf("sink down") }
 
 func TestRunPermissiveMode(t *testing.T) {
 	doc := `

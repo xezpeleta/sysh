@@ -81,6 +81,9 @@ func cmdPolicy(args []string) int {
 	// visudo before anything is written. All checks happen before the
 	// policy is installed: a failed install changes nothing.
 	sudoers, hasPriv := buildSudoers(p)
+	if n := countApprovalRules(p); n > 0 {
+		fmt.Printf("%d approval rule(s): no standing sudoers grant — root execution only after per-exec approval (sysh approvals / sysh approve)\n", n)
+	}
 	if hasPriv {
 		if !sudoAvailableFn() {
 			fmt.Fprintln(os.Stderr, "sysh policy install: privileged rules require sudo (apt install sudo) or removing the privileged rules")
@@ -137,7 +140,10 @@ func buildSudoers(p *policy.Policy) (string, bool) {
 	hasPriv := false
 	for i := range p.Rules {
 		r := &p.Rules[i]
-		if r.Privileged && !r.Deny {
+		if r.Privileged && !r.Deny && !r.Approval {
+			// Approval rules (§9) get no standing grant: their root
+			// execution happens per-exec from `sysh approve`, not from
+			// the gateway through sudo.
 			hasPriv = true
 			// TIMEOUT (Option_Spec, sudo >= 1.9.13) makes sudo kill
 			// its own root child on expiry — the user manager cannot
@@ -161,7 +167,17 @@ Defaults:sy !setenv
 func countPrivileged(p *policy.Policy) int {
 	n := 0
 	for i := range p.Rules {
-		if p.Rules[i].Privileged && !p.Rules[i].Deny {
+		if p.Rules[i].Privileged && !p.Rules[i].Deny && !p.Rules[i].Approval {
+			n++
+		}
+	}
+	return n
+}
+
+func countApprovalRules(p *policy.Policy) int {
+	n := 0
+	for i := range p.Rules {
+		if p.Rules[i].Privileged && !p.Rules[i].Deny && p.Rules[i].Approval {
 			n++
 		}
 	}

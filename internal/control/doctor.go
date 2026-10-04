@@ -2,10 +2,10 @@ package control
 
 import (
 	"fmt"
-	"path/filepath"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"

@@ -29,7 +29,8 @@ in over plain SSH as an unprivileged system user whose **login shell**:
   agent tree, whatever else lives on the host. Root work is possible only
   through **operator-written `privileged` rules**: exact-argv sudo grants
   the operator generates and validates at policy install (phase 1.5), or —
-  phase 2 — a request queue a human approves *on the server*.
+  for root work you would rather not pre-authorize — an approval queue a
+  human decides per-exec, per request, *on the server* (phase 2).
 
 Control lives **on the server**. Not in the agent's harness, not in prompt
 instructions, not in a management plane. The agent cannot talk its way past
@@ -52,12 +53,17 @@ a shell.
   `no_new_privs` makes that a kernel property for the whole agent process
   tree; the only elevation surface is the sudoers fragment `policy install`
   generates, root-owned and limited to the operator's chosen exact argv.
-- **Human-gated root work (phase 2).** For root argv the operator did
-  *not* pre-authorize as privileged rules: approval happens interactively
-  on the server — the human sees the host-recorded argv, re-checks it
-  against policy, types a confirmation code bound to the *entire* argv,
-  and the approve command itself executes it. There is no bearer token to
-  steal, replay, or leak.
+- **Human-gated root work (phase 2).** Mark a privileged rule
+  `approval = true` and it stops pre-authorizing: each exec becomes a
+  request the operator approves from anywhere root SSH reaches
+  (`ssh -t root@server sysh approve req_…`). The approver sees the
+  host-recorded argv, the approve command re-checks it against policy
+  (an operator cannot approve what policy forbids), pattern-chosen
+  arguments must be typed by hand, and the approve command itself
+  executes from its own in-memory copy in a root systemd scope. The
+  agent picks the outcome up read-only (`sysh-result`). There is no
+  bearer token to steal, replay, or leak — and the gateway process
+  tree stays under `no_new_privs`, because it never elevates.
 - **A permissive mode** for controlled experimentation: the agent
   runs anything it likes — as the unprivileged user, NNP-bit set, every
   argv journaled. Unlimited for the agent, fully recorded for you. Never
@@ -142,14 +148,24 @@ root@server:~# ausearch -k sysh --start today        # files touched, hosts cont
 $ ssh -i … sy@server.example 'systemctl restart nginx'
 [runs as root via sudo, events carry PRIV=true]
 
-# root work the operator did NOT pre-authorize (phase 2 design):
+# root work the operator did NOT pre-authorize (phase 2: approval rule):
 $ ssh -i … sy@server.example 'systemctl restart postgresql'
-approval_required: req_a1b2c3 (report this id; a human must approve it)
-root@server:~# sysh approve req_a1b2c3
-argv=["systemctl","restart","nginx"]   path=/usr/bin/systemctl
-type the pattern-chosen argument: nginx_   # what the policy's patterns matched
-[runs as root, in its own systemd unit, result journaled root-side]
-$ ssh -i … sy@server.example 'sysh-result req_a1b2c3'
+{"sysh":1,"class":"approval_required","request_id":"req_a1b2c3d4e5f6",…}
+(report the request id and stop — nothing has run)
+
+# the operator, from anywhere root SSH reaches:
+root@server:~# sysh approvals
+req_a1b2c3d4e5f6  age=12s  key=agent/server.example
+  argv=["/usr/bin/systemctl","restart","postgresql"]
+root@server:~# sysh approve req_a1b2c3d4e5f6
+  argv:   ["/usr/bin/systemctl","restart","postgresql"]
+  execute as root? [yes/no] yes
+type argument 2 exactly as shown (postgresql): postgresql
+executed: exit=0 in 213ms; the agent fetches the outcome with: sysh-result req_a1b2c3d4e5f6
+
+# the agent, read-only:
+$ ssh -i … sy@server.example 'sysh-result req_a1b2c3d4e5f6'
+[approved command output; exit status passes through]'
 ```
 
 Every control operation above is a plain SSH command. There is no daemon,
@@ -234,8 +250,11 @@ without NoNewPrivs while such a policy is installed (sudo needs
 setuid), so the linter also rejects setuid binaries on non-privileged
 allow rules in that policy. With zero privileged rules nothing changes.
 
-Phase 2 (approval queue, `sysh-result`, seccomp) and the `sysh-mcp`
-distribution are still deferred.
+The phase-2 approval queue is implemented (gateway request flow,
+`sysh approvals` / `sysh approve` / `sysh deny`, `sysh-result`). Still
+deferred: the YubiKey-signed and Telegram-bot approval transports (both
+front-ends of the same `sysh approve` primitive), the seccomp read-only
+profile, and the `sysh-mcp` distribution.
 
 ### Build & try it
 

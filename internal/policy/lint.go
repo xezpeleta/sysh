@@ -62,13 +62,23 @@ func Lint(p *Policy, fs FS) []Finding {
 		findings = append(findings, Finding{SevWarning, -1, "mode not set; defaulting to enforcing"})
 	}
 
-	hasPrivileged := false
+	hasPrivileged := false // any privileged rule (standing or approval)
+	hasStanding := false   // privileged without per-exec approval: sudoers grant + NNP off
+	hasApproval := false
 	seen := map[string]int{}
 
 	for i := range p.Rules {
 		r := &p.Rules[i]
 		if r.Privileged && !r.Deny {
 			hasPrivileged = true
+			if r.Approval {
+				hasApproval = true
+			} else {
+				hasStanding = true
+			}
+		}
+		if r.Approval && !r.Privileged {
+			findings = append(findings, Finding{SevError, i, "approval = true requires privileged = true (approval is the runtime gate on a privileged rule)"})
 		}
 
 		// Pattern safety on every position (§6.2).
@@ -141,11 +151,22 @@ func Lint(p *Policy, fs FS) []Finding {
 
 		if r.Privileged {
 			hasPrivileged = true
-			// Privileged rules run via exact-argv sudoers grants; the
-			// guardrails below are what make generation safe.
 			if r.Deny {
 				findings = append(findings, Finding{SevError, i, "deny rule cannot be privileged"})
 			}
+			if r.Approval {
+				// Approval rules (§9) have no standing sudoers grant —
+				// root execution happens only after a per-exec operator
+				// approval, and the approver re-checks this rule at that
+				// moment. Patterns and rest are therefore representable;
+				// the sudoers-exactness guardrails below do not apply.
+				if r.Timeout == 0 {
+					findings = append(findings, Finding{SevError, i, "approval rule requires an explicit timeout (bounds the root-side execution)"})
+				}
+				continue
+			}
+			// Standing privileged rules run via exact-argv sudoers grants;
+			// the guardrails below are what make generation safe.
 			if r.Rest != "" {
 				findings = append(findings, Finding{SevError, i, "privileged rule cannot use rest (sudoers grants are exact argv)"})
 			}
@@ -168,7 +189,7 @@ func Lint(p *Policy, fs FS) []Finding {
 		}
 
 		// Duplicate detection.
-		key := fmt.Sprintf("%v|%s|%v", r.Argv, r.Path, r.Deny)
+		key := fmt.Sprintf("%v|%s|%v|%v", r.Argv, r.Path, r.Deny, r.Privileged)
 		if prev, dup := seen[key]; dup {
 			findings = append(findings, Finding{SevWarning, i, fmt.Sprintf("duplicate of rule %d", prev)})
 		} else {
@@ -176,10 +197,7 @@ func Lint(p *Policy, fs FS) []Finding {
 		}
 	}
 
-	if hasPrivileged {
-		if p.Mode == ModePermissive {
-			findings = append(findings, Finding{SevError, -1, "permissive mode with privileged rules is root-equivalent; refuse"})
-		}
+	if hasStanding {
 		// Without NNP (required so sudo can elevate), a setuid binary
 		// allowed by a normal rule would silently grant root — flag it.
 		for i := range p.Rules {
@@ -192,6 +210,12 @@ func Lint(p *Policy, fs FS) []Finding {
 			}
 		}
 		findings = append(findings, Finding{SevInfo, -1, "policy contains privileged rules: they execute as root via exact-argv sudo (generated at install), and the gateway runs without NoNewPrivs on this host"})
+	}
+	if hasPrivileged && p.Mode == ModePermissive {
+		findings = append(findings, Finding{SevError, -1, "permissive mode with privileged rules is root-equivalent; refuse"})
+	}
+	if hasApproval {
+		findings = append(findings, Finding{SevInfo, -1, "policy contains approval rules: root execution happens only after a per-exec operator approval (sysh approvals / sysh approve as root); the gateway itself stays unprivileged"})
 	}
 	if p.Mode == ModePermissive {
 		findings = append(findings, Finding{SevInfo, -1, "permissive mode: every well-formed argv runs as the unprivileged sy user — treat the host as disposable; install refuses it without active auditd rules"})

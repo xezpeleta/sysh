@@ -265,7 +265,8 @@ that can match a leading `-` (no option injection). Examples:
   knowledge; discoverability is the difference between an agent that asks
   and one that guesses).
 - `sy-policy` — dump the effective policy.
-- `sysh-result <req>` — (phase 2) fetch the outcome of an approved request.
+- `sysh-result <req>` — fetch the outcome of an approved request
+  (read-only, TTL'd; 31 = pending/expired/never approved).
 
 ### 6.4 Result reporting
 
@@ -274,7 +275,7 @@ class, detail, request id where applicable, key id). This is the
 authoritative machine-readable contract. The process exit code is kept as
 human convenience only: child exit statuses pass through when a child ran;
 gateway refusals use a documented set (2 lockdown, 3 malformed argv, 30
-approval required, 125 denied, 126 sysh-result/phase-2 only) —
+approval required (30), 125 denied, 31 no result) —
 with the explicit caveat that these collide with child codes (`systemctl
 status` returns 3; `timeout` uses 124), which is exactly why automation
 must read the stderr line.
@@ -522,8 +523,14 @@ Two mechanisms, one invariant: **root argv are a closed, root-owned list.**
   This trades the strict containment of an always-NNP tree for
   observability: every root exec still names the key, argv, rule, and
   outcome.
-- **Phase 2 — approve-executes (design below).** For root work the
-  operator did *not* pre-authorize.
+- **Phase 2 — approve-executes (implemented as described below).** For
+  root work the operator did *not* pre-authorize. Rule syntax:
+  `privileged = true, approval = true` (patterns and rest allowed — the
+  approver re-checks and types them; no standing sudoers grant is
+  generated; the gateway stays under NNP). Approving over
+  `ssh -t root@server sysh approve req_…` is transport A; FIDO2-signed
+  and bot-relayed approvals are future transports over the same
+  primitive.
 
 Design principle for phase 2: **approval chooses *when*; the root-owned
 policy chooses *what*.** The agent never executes a privileged argv that

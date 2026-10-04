@@ -277,3 +277,62 @@ func TestLintPrivilegedPatternRefused(t *testing.T) {
 		t.Errorf("privileged pattern argv must error: %v", msgs)
 	}
 }
+
+func TestLintApprovalRules(t *testing.T) {
+	base := Rule{Argv: []string{"/usr/bin/systemctl", "restart", "[a-z][a-z0-9\\-]*"}, Path: "/usr/bin/systemctl", Privileged: true, Approval: true, Timeout: 30}
+
+	// a pattern approval rule is valid: no standing grant exists, the
+	// approver re-checks the argv and types the pattern-chosen values
+	p := pol(ModeEnforcing, base)
+	if msgs := lintErrs(t, p, stdFS()); msgs != nil {
+		t.Errorf("valid approval rule must not error: %v", msgs)
+	}
+
+	// approval without privileged is a schema error
+	b := base
+	b.Privileged = false
+	p = pol(ModeEnforcing, b)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "approval = true requires privileged") {
+		t.Errorf("approval without privileged must error: %v", msgs)
+	}
+
+	// timeout still mandatory (bounds the root-side execution)
+	b = base
+	b.Timeout = 0
+	p = pol(ModeEnforcing, b)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "approval rule requires an explicit timeout") {
+		t.Errorf("approval without timeout must error: %v", msgs)
+	}
+
+	// rest is allowed on approval rules (the approver types every
+	// rest-chosen argument)
+	b = base
+	b.Rest = "[a-z0-9\\-]+"
+	p = pol(ModeEnforcing, b)
+	if msgs := lintErrs(t, p, stdFS()); hasMsg(msgs, "cannot use rest") {
+		t.Errorf("approval rule with rest must not error: %v", msgs)
+	}
+
+	// permissive + approval refused (root work needs the record)
+	p = pol(ModePermissive, base)
+	if msgs := lintErrs(t, p, stdFS()); !hasMsg(msgs, "root-equivalent") {
+		t.Errorf("permissive+approval must error: %v", msgs)
+	}
+
+	// ack is NOT required on approval rules: the per-exec human
+	// approval supersedes the install-time acknowledgment
+	b = base
+	b.Ack = false
+	p = pol(ModeEnforcing, b)
+	if msgs := lintErrs(t, p, stdFS()); hasMsg(msgs, "ack = true") {
+		t.Errorf("approval rule must not demand ack: %v", msgs)
+	}
+
+	// approval-only policies keep NoNewPrivs: no setuid conflict
+	fs := setuidFS()
+	b = base
+	p = pol(ModeEnforcing, b)
+	if msgs := lintErrs(t, p, fs); hasMsg(msgs, "is setuid while") {
+		t.Errorf("approval-only policy must not trigger the NNP setuid scan: %v", msgs)
+	}
+}

@@ -31,7 +31,8 @@ type Rule struct {
 	Rest       string   `toml:"rest"`    // opt-in pattern for extra positions
 	Timeout    int      `toml:"timeout"` // seconds, 1..3600
 	Privileged bool     `toml:"privileged"`
-	Ack        bool     `toml:"ack"` // acknowledges linter warnings on this rule
+	Approval   bool     `toml:"approval"` // privileged + per-exec operator approval (phase 2)
+	Ack        bool     `toml:"ack"`      // acknowledges linter warnings on this rule
 }
 
 // Parse decodes and structurally validates policy bytes.
