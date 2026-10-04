@@ -16,8 +16,10 @@ disposable host, rolled back afterwards — the question afterwards is
 always the same: *"it works, but what else did it do? which files did
 it change? which other hosts did it touch?"*
 
-`sysh` makes the agent's SSH login itself the control point. The agent logs
-in over plain SSH as an unprivileged system user whose **login shell**:
+`sysh` makes the agent's SSH login itself the control point. The agent
+logs in over plain SSH — from any harness, any script, or a plain
+terminal — as the unprivileged user `sy`, whose **login shell**
+(`sysh`, *sy's shell*) makes every caller learn nothing new:
 
 - **records everything** — every command attempt, allowed or denied, with
   the full argv, the invoking key, and the outcome — to kernel-attested

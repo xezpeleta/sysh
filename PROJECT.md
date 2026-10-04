@@ -37,9 +37,35 @@ is an unprivileged system user whose login shell:
   phase-2 design (§9).
 
 Phase 1 delivered the record and the delimiting. Phase 1.5 added
-operator-pre-authorized root exec through generated sudo grants. The
-approval queue (§9) is sequenced deliberately so the harder interactive
-surface ships only after the base is reviewed in production.
+operator-pre-authorized root exec through generated sudo grants. Phase 2
+(§9) added per-exec operator-gated root: `approval = true` rules that
+pre-authorize nothing and queue a request instead.
+
+### 1.1 Naming (settled)
+
+One syllable, three referents:
+
+| Thing | Name | |
+|---|---|---|
+| server user | `sy` | default account the agent logs in as |
+| login shell / project | `sysh` | *sy's shell* — what /etc/passwd says |
+| laptop-side client | `sy` | one binary: `sy mcp` (stdio MCP server), later `sy provision`, `sy doctor` |
+
+`sy runs sysh` is the whole story, and it is literal. The name collision
+space was checked before settling: `shy` is taken by an existing AI-agent
+sandbox (Shai, pronounced "shy"), `aish` by an AI-assisted SSH shell;
+`sysh` is clean (only a Spotify dashboard, different space).
+
+Positioning, in one sentence: **the control point is the shell itself** —
+whatever sends commands over SSH (any harness, any script, a junior admin)
+gets the same bounds and the same record, without learning new commands;
+sysh is not a harness and does not want to be one.
+
+The account name is **not** part of the trust model (identity is the
+key id + the account's uid; enforcement never consults the name), so it
+is configurable at install time (`SYSH_USER=…` to postinst →
+`/etc/sysh/user`, sshd `Match` generated from it), defaulting to `sy`.
+Nothing about enforcement changes when it is renamed.
 
 ## 2. Non-goals
 
@@ -583,9 +609,10 @@ Future (not v1): FIDO2 touch-gated approval via stock
 `ssh-keygen -Y sign/verify` over the request hash — closing the
 operator-laptop-malware residual (R1) without custom crypto.
 
-## 10. Laptop side: `sysh-mcp` (separate distribution)
+## 10. Laptop side: the `sy` client (`sy mcp`)
 
-A small stdio MCP server for agent harnesses. It holds only per-host agent
+A small stdio MCP server for agent harnesses, shipped as a mode of the
+`sy` client binary (§1.1) rather than a separate name. It holds only per-host agent
 keys (unprivileged by construction) and **never** has approval or listing
 power: its tools are `sy_exec`, `sy_docs`, `sy_policy`. An agent needing
 elevation surfaces the request id and finishes its turn.
@@ -604,9 +631,9 @@ here):
   `approval_required` responses instruct the agent to report and stop, not
   poll.
 
-`sysh-mcp` runs in a different trust domain from the server package and is
+`sy` runs in a different trust domain from the server package and is
 distributed separately. **Deployment requirement DR1:** the agent harness
-(and `sysh-mcp`) runs as a **dedicated OS user on the operator machine**,
+(and `sy`) runs as a **dedicated OS user on the operator machine**,
 holding only agent keys — never the operator's root SSH keys, never
 `ControlMaster`, never agent forwarding for root sessions. Without DR1 the
 model collapses to "the agent can read your root key"; with it, harness
