@@ -158,22 +158,6 @@ body {
   color: var(--secondary);
 }
 .pagent.ok { color: var(--green); font-weight: 700; }
-#agentlog {
-  border-top: 1px solid var(--border);
-  margin-top: 8px;
-  padding-top: 6px;
-}
-.agentlog-row {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--secondary);
-  padding: 2px 0;
-}
-.agentlog-row .amark { font-weight: 700; margin-right: 6px; }
-.agentlog-row .amark.fetched { color: var(--green); }
-.agentlog-row .amark.expired { color: var(--red); }
-.agentlog-row .amark.approved { color: var(--amber); }
-.agentlog-row .ameta { color: var(--muted); }
 .pexpired {
   padding: 4px 10px;
   color: #888;

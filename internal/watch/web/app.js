@@ -8,7 +8,6 @@ const $ = (id) => document.getElementById(id);
 let events = [];          // all events received, newest last
 let hosts = [];           // last /api/hosts
 let pending = [];         // last /api/pending
-let agents = [];          // last /api/agents (per-request agent state)
 let seenSeq = 0;
 let filters = {
   search: "",
@@ -169,28 +168,6 @@ function agentLine(a) {
     default:         txt = `agent state: ${esc(a.state)}`;
   }
   return `<span class="pagent${a.state === "fetched" ? " ok" : ""}">${esc(txt)}</span>`;
-}
-
-// renderAgents lists recent requests that already left the waiting
-// panel (fetched, or told-expired): the operator sees the aftermath,
-// not just the queue.
-function renderAgents() {
-  const el = $("agentlog");
-  if (!el) return;
-  const ids = new Set(pending.map((p) => p.host + "/" + p.id));
-  const done = agents.filter((a) => !ids.has(a.host + "/" + a.id) &&
-    (a.state === "fetched" || a.state === "expired" || a.state === "approved"));
-  if (!done.length) { el.hidden = true; return; }
-  el.hidden = false;
-  el.innerHTML = done.slice(0, 8).map((a) => {
-    const mark = a.state === "fetched" ? "✓" : a.state === "expired" ? "✗" : "…";
-    const tail = a.state === "fetched"
-      ? `agent got the answer${a.exit != null ? ` (exit ${a.exit})` : ""} · ${fmtAge(a.filed_ago_sec)} after filing`
-      : a.state === "expired"
-        ? `agent was told: expired · can re-file`
-        : `approved · agent has not picked it up · ${fmtAge(a.approved_ago_sec)} ago`;
-    return `<div class="agentlog-row"><span class="amark ${a.state}">${mark}</span>${esc(a.host)} · ${esc((a.argv || []).join(" "))} · <span class="ameta">${esc(tail)}</span></div>`;
-  }).join("");
 }
 
 // countdown ticks: one interval drives every row's clock between
@@ -401,11 +378,7 @@ async function pollHosts() {
 }
 async function pollPending() {
   try {
-    const [r, ra] = await Promise.all([
-      fetch("/api/pending"),
-      fetch("/api/agents").catch(() => null),
-    ]);
-    if (ra && ra.ok) agents = await ra.json();
+    const r = await fetch("/api/pending");
     const list = await r.json();
     // backstop for a missed SSE event: a request id that was not
     // there on the previous poll alerts too (never on the first
@@ -423,7 +396,6 @@ async function pollPending() {
     firstPendingPoll = false;
     pending = list;
     renderPending();
-    renderAgents();
   } catch {}
 }
 
@@ -545,7 +517,6 @@ function confirmCeremony() {
       const host = ceremonyCtx.host, id = ceremonyCtx.id;
       pending = pending.filter((p) => !(p.host === host && p.id === id));
       renderPending();
-      renderAgents();
       pollPending();
       setTimeout(() => { ceremony.hidden = true; }, 2500);
     })
