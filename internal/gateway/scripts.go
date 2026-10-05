@@ -10,8 +10,10 @@ package gateway
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -72,7 +74,7 @@ func checkScriptFile(path string) error {
 		return fmt.Errorf("%s: not a regular file", path)
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("%s: group/world-writable", path)
+		return fmt.Errorf("%s: group/world-writable (mode %04o — re-upload with mode 0600; rsync -a preserves source permissions)", path, fi.Mode().Perm())
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -226,4 +228,34 @@ func RunScriptFile(cfg Config, path string) int {
 	}
 	code, _ = s.runScriptFile(real, argv, base)
 	return code
+}
+
+// listAgentScripts returns the names of scripts available under dir
+// (relative paths, subdirectories included, names only — contents
+// are never exposed; an agent runs a script or doesn't). Capped so
+// a stuffed directory cannot bloat every help call.
+func listAgentScripts(dir string) []string {
+	var names []string
+	seen := 0
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			// skip the sy-owned drop dir? No — it is the agent's own
+			// upload space; its scripts are first-class.
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil || strings.HasPrefix(rel, "..") {
+			return nil
+		}
+		seen++
+		if seen <= 50 {
+			names = append(names, rel)
+		}
+		return nil
+	})
+	sort.Strings(names)
+	return names
 }

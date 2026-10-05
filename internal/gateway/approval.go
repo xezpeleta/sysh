@@ -113,7 +113,9 @@ func serveResult(cfg Config, emit func(audit.Event) error, ident Identity, argv 
 	if len(argv) != 2 || !approval.ValidID(argv[1]) {
 		ev.Detail = "usage: sysh-result <request-id>"
 		_ = emit(ev)
-		result.Write(cfg.Stderr, result.ClassNoResult, "usage: sysh-result <request-id>", ident.KeyID, result.ExitNoResult)
+		// The format is the teaching: ids look like req_ + 12 hex
+		// and arrive in an approval_required response.
+		result.Write(cfg.Stderr, result.ClassNoResult, "usage: sysh-result <request-id> (id format: req_ followed by 12 hex characters; it is the request_id field of an approval_required response)", ident.KeyID, result.ExitNoResult)
 		return result.ExitNoResult
 	}
 	id := argv[1]

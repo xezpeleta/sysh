@@ -105,7 +105,16 @@ func Lint(p *Policy, fs FS) []Finding {
 				findings = append(findings, Finding{SevError, i, fmt.Sprintf("argv %q: pattern can match the empty string", pos)})
 			}
 			if !info.First.Empty() && info.First.Contains('-') {
-				findings = append(findings, Finding{SevError, i, fmt.Sprintf("argv %q: pattern can match a leading '-' (option injection)", pos)})
+				// Option injection: a pattern that can match a leading '-'
+				// could let unknown options through. In a fixed position the
+				// operator wrote the option cluster themselves — allowed, but
+				// only with an explicit ack (live-caught: the documented
+				// rsync --server transfer rule is impossible without this).
+				if r.Ack {
+					findings = append(findings, Finding{SevWarning, i, fmt.Sprintf("argv %q: pattern can match a leading '-' — acknowledged option cluster", pos)})
+				} else {
+					findings = append(findings, Finding{SevError, i, fmt.Sprintf("argv %q: pattern can match a leading '-' (option injection; add ack = true if this position is an option cluster you wrote)", pos)})
+				}
 			}
 			if info.HasAnyChar {
 				findings = append(findings, Finding{SevWarning, i, fmt.Sprintf("argv %q: unescaped '.' matches any character; use '\\.' if you mean a literal dot", pos)})
@@ -249,6 +258,22 @@ func Lint(p *Policy, fs FS) []Finding {
 			}
 		}
 		findings = append(findings, Finding{SevInfo, -1, "root mode: every argv not denied runs as root via a wildcard sudoers grant — this is total freedom with a journal, not control; after the first exec the agent can mint access the journal never sees; treat the host as disposable"})
+	}
+
+	// ack = true means the operator reviewed THIS rule: its warnings
+	// fold to info (they were advisory, and they were read). Errors
+	// never fold — ack acknowledges risk, not malformation.
+	for idx := range p.Rules {
+		if !p.Rules[idx].Ack {
+			continue
+		}
+		for j := range findings {
+			f := &findings[j]
+			if f.Rule == idx && f.Severity == SevWarning {
+				f.Severity = SevInfo
+				f.Msg = "acknowledged: " + f.Msg
+			}
+		}
 	}
 
 	return findings

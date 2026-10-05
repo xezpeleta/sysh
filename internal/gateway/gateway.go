@@ -238,7 +238,9 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 	// `help` (§6.3): the protocol teaches itself. Always allowed,
 	// read-only, and it needs the policy in force to tell the truth
 	// about scripts and limits — so it sits after the fail-closed load.
-	if argv[0] == "help" && len(argv) == 1 {
+	// Extra args are accepted and ignored (`help scripts` asked the
+	// right question; refusing it was the channel being smug).
+	if argv[0] == "help" {
 		return s.runHelp(baseEvent)
 	}
 
@@ -249,7 +251,7 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 	// The refusal teaches: the detail says what to do instead.
 	if pol.Mode != policy.ModeRoot {
 		if hit := denylistHitForArgv0(argv); hit != nil && !hit.Warn {
-			detail := escapeHatchDetail(argv[0], hit)
+			detail := escapeHatchDetail(argv[0], hit, pol)
 			ev := withDec(baseEvent, audit.DecisionDeny)
 			ev.Detail = detail
 			code, _ := deny(result.ClassDenied, detail, result.ExitDenied, ev)
@@ -287,6 +289,19 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 		detail := "no rule allows this argv"
 		if dec.Rule != nil && dec.Rule.Deny {
 			detail = fmt.Sprintf("denied by deny rule %d", dec.RuleIdx)
+			ev.Detail = detail
+		} else {
+			// Teaching refuses (live-tested: an unbriefed agent's
+			// first three mistakes are shell operators, bare names,
+			// and hunting for an upload builtin). Each hint uses
+			// only information sy-policy already publishes.
+			if shellOperatorArgv(argv) {
+				detail += " — no shell operators here: send one command per exec (argv is split on whitespace, && ; | are literal words)"
+			} else if hint := absPathHint(compiled, argv[0]); hint != "" {
+				detail = "no rule allows this argv — rules name binaries by absolute path; try " + hint
+			} else if transferTeaching(pol, argv) {
+				detail = "no rule allows this argv — file transfer needs a policy rule your operator acknowledges (usually scoped to the agent-scripts directory); ask your operator. 'help' explains"
+			}
 			ev.Detail = detail
 		}
 		code, _ := deny(result.ClassDenied, detail, result.ExitDenied, ev)
@@ -667,7 +682,13 @@ func denylistHitForArgv0(argv []string) *policy.DenylistHit {
 // escapeHatchDetail is the teaching refusal for denylisted names at
 // run time: it says why and what to do instead. An agent that hits
 // this can self-correct on the next attempt.
-func escapeHatchDetail(name string, hit *policy.DenylistHit) string {
+func escapeHatchDetail(name string, hit *policy.DenylistHit, pol *policy.Policy) string {
+	// Transfers get upload advice, not exec advice — an agent reaching
+	// for scp is trying to place a script, and the supported path is
+	// an operator-acknowledged rsync rule.
+	if isTransferName(name) && pol != nil && pol.AgentScripts != "" {
+		return fmt.Sprintf("%s is not executable on this host. File transfer needs a policy rule your operator acknowledges (usually rsync scoped to %s); ask your operator. 'help' explains", name, pol.AgentScripts)
+	}
 	detail := fmt.Sprintf("%s is not executable on this host — it is an escape hatch (%s): it would run commands this policy never sees", name, hit.Reason)
 	detail += ". Run commands one per exec, or batch them in a sysh script — one command per line, first line #!/usr/bin/sysh. 'help' explains"
 	return detail

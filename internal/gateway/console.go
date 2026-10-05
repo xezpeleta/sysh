@@ -123,7 +123,8 @@ func consoleBanner(s *session, pol *policy.Policy) string {
 	b.WriteString("  exit        close the session\n")
 	if pol != nil && pol.AgentScripts != "" {
 		fmt.Fprintf(&b, "scripts: one command per line, first line %s —\n", ScriptShebang)
-		fmt.Fprintf(&b, "  upload to %s; every line is checked like a\n", pol.AgentScripts)
+		fmt.Fprintf(&b, "  upload to %s (needs an operator-acknowledged\n", pol.AgentScripts)
+		b.WriteString("  rsync rule — ask); every line is checked like a\n")
 		b.WriteString("  direct exec. No shell features inside.\n")
 	} else {
 		b.WriteString("scripts: not enabled on this host (agent_scripts unset)\n")
@@ -158,6 +159,11 @@ func (s *session) runHelp(base audit.Event) (int, bool) {
 		fmt.Fprintf(&b, "  one command per line, first line %s;\n", ScriptShebang)
 		b.WriteString("  run it like any command; every line is policy-checked\n")
 		b.WriteString("  and journaled like a direct exec\n")
+		if names := listAgentScripts(pol.AgentScripts); len(names) > 0 {
+			fmt.Fprintf(&b, "  available: %s\n", strings.Join(names, ", "))
+		}
+		b.WriteString("  to place one: transfer needs a policy rule your operator\n")
+		b.WriteString("  acknowledges (rsync scoped to this directory) — ask them\n")
 	} else {
 		b.WriteString("scripts: not enabled (agent_scripts unset) — batch work is\n")
 		b.WriteString("  one command per SSH exec\n")

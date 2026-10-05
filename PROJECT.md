@@ -309,7 +309,12 @@ Go's RE2 (linear time) and anchored `\A…\z`. From the syntax tree the
 linter computes the pattern's first-character set and rejects anything
 that can match a leading `-` (no option injection). Examples:
 `"nginx|unifi"`, `"[a-z0-9@._][a-z0-9@._\\-]*"` (leading class without
-`-`).
+`-`). One exception, learned live: some protocols pass option clusters
+as fixed argv positions by design (`rsync --server` sends its protocol
+flags as one token). A fixed-position pattern that can match a leading
+`-` is allowed when the rule carries `ack = true` — the operator wrote
+that cluster themselves; `rest` positions can never match one, ack or
+not.
 
 - **Exact length by default**: extra arguments are denied. Opt-in
   `rest = "<pattern>"` allows additional positions, each matching that
@@ -512,7 +517,9 @@ privileged = true             # executed as root via the operator's
   (`python3.11`, `view`, `busybox`) cannot slip past. Binaries that write
   files or open network connections without being executors (`curl`,
   `wget`, `rsync`, …) raise a **warning** that requires an explicit
-  `ack = true` on the rule before `policy install` proceeds. Over-broad
+  `ack = true` on the rule before `policy install` proceeds. `ack = true`
+  is rule-scoped review: it acknowledges **all** of that rule's warnings
+  (never errors). Over-broad
   rules are the most likely real-world failure; the linter is the
   countermeasure, not an afterthought.
 - Loading: open once, `fstat` ownership/mode of file and ancestors, parse
@@ -638,7 +645,7 @@ The banner is the MOTD sysh fully controls (sshd's own MOTD prints
 before it on interactive logins; non-interactive `-c` sessions never
 see any MOTD, which is why `help` exists as an argv).
 
-### 6.12 Runtime denylist (teaching refuses)
+### 6.12 Teaching surfaces (deny with an answer)
 
 The linter has always refused rules for shells, interpreters and
 execution wrappers (SevError, not acknowledgeable). Since v0.6 the
@@ -647,8 +654,42 @@ root**: resolving argv[0] (fixed PATH for bare names, symlinks
 followed) and refusing with a teaching detail — what the name is,
 why it is structural, and what to do instead (one command per exec,
 or a sysh script; `'help' explains`). This closes the permissive-mode
-hole where `bash` would otherwise have run freely, and makes every
-deny self-explanatory to the agent that hits it.
+hole where `bash` would otherwise have run freely.
+
+The rest of the deny path teaches too — each hint answers an
+unbriefed agent's actual first moves (all observed live, see below):
+
+- **Shell operators** (`uptime && whoami`): argv is split on
+  whitespace; `&& ; |` are literal words — send one command per exec.
+- **Bare names** (`uptime` when the rule says `/usr/bin/uptime`):
+  rules name binaries by absolute path; the hint names the path to
+  try. (No leak: it is information `sy-policy` already prints.)
+- **Transfers** (`scp`, `sftp`, `rsync` with no rule): uploads need a
+  policy rule the operator acknowledges (rsync scoped to the
+  agent-scripts directory); ask your operator.
+- **Script modes** (`rsync -a` preserving a 0664 source): re-upload
+  with 0600; the refusal says rsync preserves source permissions.
+- **`sysh-result` misuse**: the usage line includes the id format
+  (`req_` + 12 hex, from an `approval_required` response).
+- `help` accepts and ignores arguments — `help scripts` asked the
+  right question; refusing it was the channel being smug. It lists
+  the scripts available in the agent-script directory (names only)
+  and states how to place one.
+
+**Measured, not asserted.** The teaching surfaces were validated by
+handing an unbriefed LLM agent (no sysh documentation, just an ssh
+command and a task) the channel and watching the sysh journal:
+
+- v0.6.0-beta1: tasks "uptime/id" solved in 15 s, but the batch
+  task never completed — ~40 blind probes for an upload builtin
+  over 8 minutes, then the agent gave up on the channel and went
+  reading local source instead.
+- v0.6.0-beta2 (hints above + the acked rsync transfer rule): the
+  same agent completed the batch task end to end — discover `help`,
+  list scripts, upload via the acknowledged rsync rule, recover from
+  the file-mode refusal by reading it, run — in about 90 seconds,
+  with zero blind probes. Its closing line: "The refusals aren't
+  obstacles — they're documentation."
 
 ### 8.1 Event model
 

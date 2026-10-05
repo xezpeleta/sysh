@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -511,4 +512,61 @@ func TestLintAgentScriptsNotRootOwned(t *testing.T) {
 		}
 	}
 	t.Fatal("non-root-owned dir must be a SevError")
+}
+
+func TestLintLeadingDashOptionCluster(t *testing.T) {
+	// fixed-position option cluster: error without ack, warning with
+	lint := func(doc string) []Finding {
+		p, err := Parse([]byte(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Lint(p, RealFS())
+	}
+	base := `
+version = 2
+host = "h"
+mode = "enforcing"
+
+[[rule]]
+argv = ["/usr/bin/rsync", "--server", "(-a\\.b|-c\\.d)", ".", "d/[a-z]*"]
+path = "/usr/bin/rsync"
+ack = %s
+`
+	fs := lint(fmt.Sprintf(base, "false"))
+	if !hasFinding(fs, SevError, "leading '-'") {
+		t.Fatalf("want leading-dash error without ack, got %v", fs)
+	}
+	fs = lint(fmt.Sprintf(base, "true"))
+	if hasFinding(fs, SevError, "leading '-'") {
+		t.Fatalf("acked option cluster must not error, got %v", fs)
+	}
+	if !hasFinding(fs, SevInfo, "option cluster") {
+		t.Fatalf("want info for acked cluster, got %v", fs)
+	}
+	// rest position: never allowed, ack or not
+	docRest := `
+version = 2
+host = "h"
+mode = "enforcing"
+
+[[rule]]
+argv = ["/bin/echo"]
+path = "/bin/echo"
+rest = "-[a-z]*"
+ack = true
+`
+	fs = lint(docRest)
+	if !hasFinding(fs, SevError, "leading '-'") {
+		t.Fatalf("rest leading-dash must always error, got %v", fs)
+	}
+}
+
+func hasFinding(fs []Finding, sev int, substr string) bool {
+	for _, f := range fs {
+		if f.Severity == sev && strings.Contains(f.Msg, substr) {
+			return true
+		}
+	}
+	return false
 }

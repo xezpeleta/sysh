@@ -263,3 +263,69 @@ func TestRunAgentScriptSymlinkEscapeRefused(t *testing.T) {
 		t.Fatalf("stderr = %s", stderr.String())
 	}
 }
+
+func TestTeachingShellOperators(t *testing.T) {
+	cfg, _, _, _ := testConfig(t, execPolicy)
+	code := Run(cfg, "uptime && whoami && id")
+	if code != 125 {
+		t.Fatalf("exit %d, want 125", code)
+	}
+	stderr := cfg.Stderr.(*bytes.Buffer).String()
+	if !strings.Contains(stderr, "no shell operators here") {
+		t.Fatalf("stderr = %s", stderr)
+	}
+}
+
+func TestTeachingAbsPathHint(t *testing.T) {
+	cfg, _, _, _ := testConfig(t, execPolicy)
+	code := Run(cfg, "echo hi")
+	if code != 125 {
+		t.Fatalf("exit %d, want 125", code)
+	}
+	stderr := cfg.Stderr.(*bytes.Buffer).String()
+	if !strings.Contains(stderr, "try /bin/echo") {
+		t.Fatalf("stderr = %s", stderr)
+	}
+}
+
+func TestTeachingHelpWithArgs(t *testing.T) {
+	cfg, _, _, _ := testConfig(t, execPolicy)
+	code := Run(cfg, "help scripts")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	stdout := cfg.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(stdout, "how to work on this host") {
+		t.Fatalf("stdout = %s", stdout)
+	}
+}
+
+func TestTeachingHelpListsScripts(t *testing.T) {
+	cfg, _, stdout, _, dir := scriptTestConfig(t)
+	writeScript(t, dir, "check.sysh", "#!/usr/bin/sysh\n/bin/echo x\n")
+	os.MkdirAll(filepath.Join(dir, "drop"), 0o700)
+	writeScript(t, filepath.Join(dir, "drop"), "deploy.sysh", "#!/usr/bin/sysh\n/bin/echo y\n")
+	code := Run(cfg, "help")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "check.sysh") || !strings.Contains(out, "drop/deploy.sysh") {
+		t.Fatalf("help does not list scripts: %s", out)
+	}
+	if !strings.Contains(out, "ask them") {
+		t.Fatalf("help does not explain upload path: %s", out)
+	}
+}
+
+func TestTeachingRsyncRedirectsToOperator(t *testing.T) {
+	cfg, _, _, stderr, _ := scriptTestConfig(t)
+	code := Run(cfg, "rsync -a /tmp/ x")
+	if code != 125 {
+		t.Fatalf("exit %d, want 125", code)
+	}
+	s := stderr.String()
+	if !strings.Contains(s, "ask your operator") {
+		t.Fatalf("stderr = %s", s)
+	}
+}
