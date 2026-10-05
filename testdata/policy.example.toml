@@ -4,6 +4,11 @@
 # argv is the unit of trust: rules match exact argv length unless a
 # `rest` pattern is given. A position containing \ | ( ) [ ] { } * + ?
 # is a restricted RE2 pattern (anchored); everything else is a literal.
+#
+# Complete worked examples (each with a README) live in examples/:
+#   diagnostic/  read-only agent (observe by allowlist)
+#   operational/ diagnose freely, act through the approval channel
+#   webserver/   Apache + fail2ban maintenance
 
 version = 2
 host = "example-host"

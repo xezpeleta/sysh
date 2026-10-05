@@ -355,6 +355,17 @@ with the explicit caveat that these collide with child codes (`systemctl
 status` returns 3; `timeout` uses 124), which is exactly why automation
 must read the stderr line.
 
+**Channels are separated by design**: the child's stdout streams to
+the session's stdout **untouched**, and the envelope goes to stderr —
+so an agent parses command output from stdout as it always would and
+reads stderr for the outcome (class, exit, rule). A remote pipe like
+`cmd | grep x` is denied with a teaching line ("no shell operators
+here — send one command per exec"): there is no shell to interpret
+it, and filtering belongs on the caller's side (`ssh sy@host 'cmd'
+| grep x` runs the pipe in the agent's own shell) — or inside a
+traced script, where every side of the pipe is a checked exec
+(§6.13). The `help` builtin states this contract in-band.
+
 ### 6.5 Lockdown
 
 Any local user may create `/run/sysh-tripwire/lockdown` (a tripwire: an
@@ -527,6 +538,17 @@ privileged = true             # executed as root via the operator's
   stderr line explains) on any anomaly.
 - The `sy` UID cannot write `/etc/sysh`; no signature scheme is used — §12
   explains why it was removed.
+
+Worked examples ship in [`examples/`](examples/), each with its own
+README and an installable policy: **`diagnostic/`** (read-only — 59
+rules over the observe verbs, read-only-ness by omission: no mutating
+tool has a rule), **`operational/`** (diagnose freely, act only through
+the approval channel: one standing root grant for contrast,
+`systemctl restart/reload` and `apt-get update` approval-gated, the
+full §9 ceremony documented step by step), and **`webserver/`**
+(Apache + fail2ban maintenance: reads, enumerated writes through
+`tee`, validate, approval-gated restart). All three were validated
+live on a real host before shipping.
 
 ## 8. Observability (phase 1 headline)
 
@@ -715,6 +737,21 @@ Properties:
   in the tree. Fixed positions, `rest`, deny rules — identical to a
   direct exec. Builtins, approval, and privileged rules are
   direct-exec concepts and do not apply inside a tree.
+- **Pipes and redirections inside a script are interpreter
+  plumbing, but their sides are execs**: `uptime | grep x` in a
+  bash script gets the pipe built by bash (not argv-visible, the
+  honest limit above), while **each side is intercepted and
+  policy-checked** — verified live: the allowed side runs, the
+  side without a rule fails with "Operation not permitted", bash
+  reports exit 126, and the script continues. The pipe as a shape
+  is never trusted; the argv on each end is.
+- **argv[0] inside a tree is the word the interpreter passes**:
+  a script line `grep x` execs `/usr/bin/grep` (the interpreter
+  resolves PATH) but the journaled and matched argv is
+  `["grep" "x"]`. A traced policy therefore needs **bare-name
+  argv[0] rules** (`argv = ["grep"]`, `path = "/usr/bin/grep"`)
+  for the commands its scripts use — each one an explicit operator
+  decision; meaning stays in the policy's `path`, never in PATH.
 - **Refusal is a failed exec, not an abort**: unlike line mode
   (§6.10, which stops at the offending line), a refused exec looks
   to the interpreter like `Permission denied`; whether the script

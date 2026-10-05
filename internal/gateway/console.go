@@ -125,7 +125,14 @@ func consoleBanner(s *session, pol *policy.Policy) string {
 		fmt.Fprintf(&b, "scripts: one command per line, first line %s —\n", ScriptShebang)
 		fmt.Fprintf(&b, "  upload to %s (needs an operator-acknowledged\n", pol.AgentScripts)
 		b.WriteString("  rsync rule — ask); every line is checked like a\n")
-		b.WriteString("  direct exec. No shell features inside.\n")
+		if pol.AgentScriptsMode == policy.AgentModeTraced {
+			b.WriteString("  direct exec — or, under traced mode, any\n")
+			b.WriteString("  shebang runs with every exec in its tree\n")
+			b.WriteString("  checked and journaled (pipes inside are the\n")
+			b.WriteString("  interpreter's; each side is still checked)\n")
+		} else {
+			b.WriteString("  direct exec. No shell features inside.\n")
+		}
 	} else {
 		b.WriteString("scripts: not enabled on this host (agent_scripts unset)\n")
 	}
@@ -149,6 +156,11 @@ func (s *session) runHelp(base audit.Event) (int, bool) {
 	b.WriteString("journaled before and after it runs. No shell semantics:\n")
 	b.WriteString("no pipes, no variables, no quoting games.\n")
 	b.WriteString("\n")
+	b.WriteString("output: your stdout is the child's stdout, untouched —\n")
+	b.WriteString("the JSON result line goes to your stderr. Parse stdout\n")
+	b.WriteString("for data, read stderr for the outcome; filter output on\n")
+	b.WriteString("your side of the connection, not with a remote pipe.\n")
+	b.WriteString("\n")
 	mode := policy.ModeEnforcing
 	if pol != nil {
 		mode = pol.Mode
@@ -156,9 +168,20 @@ func (s *session) runHelp(base audit.Event) (int, bool) {
 	fmt.Fprintf(&b, "mode: %s\n", mode)
 	if pol != nil && pol.AgentScripts != "" {
 		fmt.Fprintf(&b, "scripts: %s\n", pol.AgentScripts)
-		fmt.Fprintf(&b, "  one command per line, first line %s;\n", ScriptShebang)
-		b.WriteString("  run it like any command; every line is policy-checked\n")
-		b.WriteString("  and journaled like a direct exec\n")
+		if pol.AgentScriptsMode == policy.AgentModeTraced {
+			fmt.Fprintf(&b, "  traced mode: any shebang (bash, python, ...); every\n")
+			fmt.Fprintf(&b, "  exec in the tree is policy-checked like a direct exec.\n")
+			b.WriteString("  Pipes and redirections inside are the interpreter's\n")
+			b.WriteString("  plumbing — each side of a pipe is still a checked exec.\n")
+			b.WriteString("  A refused exec fails as Operation not permitted and the\n")
+			b.WriteString("  script decides whether to continue. Commands inside\n")
+			b.WriteString("  scripts resolve via the interpreter's PATH: write rules\n")
+			b.WriteString("  for the bare names you use there.\n")
+		} else {
+			fmt.Fprintf(&b, "  one command per line, first line %s;\n", ScriptShebang)
+			b.WriteString("  run it like any command; every line is policy-checked\n")
+			b.WriteString("  and journaled like a direct exec\n")
+		}
 		if names := listAgentScripts(pol.AgentScripts); len(names) > 0 {
 			fmt.Fprintf(&b, "  available: %s\n", strings.Join(names, ", "))
 		}

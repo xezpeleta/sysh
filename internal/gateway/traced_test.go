@@ -238,3 +238,50 @@ func TestTracedScriptPermissiveRunsUnmatched(t *testing.T) {
 		t.Fatalf("whoami produced no output in permissive mode")
 	}
 }
+
+// The help builtin must explain traced mode when it is in force —
+// pipes-inside semantics and the bare-argv[0] rule consequence —
+// instead of the line-mode "no shell features" text (§6.12, §6.13).
+func TestHelpExplainsTracedMode(t *testing.T) {
+	tracedInit(t)
+	base := t.TempDir()
+	dir := filepath.Join(base, "agent-scripts")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doc := strings.ReplaceAll(tracedPolicy, "%s", dir)
+	cfg, _, stdout, _ := testConfig(t, doc)
+	if code := Run(cfg, "help"); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"traced mode: any shebang (bash, python, ...)",
+		"each side of a pipe is still a checked exec",
+		"for the bare names you use there",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("traced help missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "one command per line, first line #!/usr/bin/sysh") {
+		t.Fatalf("traced help must not teach line-mode syntax:\n%s", out)
+	}
+}
+
+// The console banner must state traced-mode script semantics instead
+// of the line-mode "No shell features inside" (§6.11, §6.13).
+func TestConsoleBannerTracedMode(t *testing.T) {
+	cfg, _, stdout, _, _ := tracedTestConfig(t, "enforcing")
+	cfg.Stdin = strings.NewReader("exit\n")
+	if code := RunConsole(cfg); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "pipes inside are the") {
+		t.Fatalf("traced banner missing pipe note:\n%s", out)
+	}
+	if strings.Contains(out, "No shell features inside") {
+		t.Fatalf("traced banner teaches line mode:\n%s", out)
+	}
+}
