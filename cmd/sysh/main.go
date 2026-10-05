@@ -61,7 +61,7 @@ func run() int {
 			if stdinIsTTY() {
 				return consoleMain()
 			}
-			fmt.Fprintln(os.Stderr, `{"sysh":1,"class":"no_input","detail":"interactive logins are not supported; the agent channel speaks `+"`sysh -c '<command>'`"+` only","exit":3}`)
+			fmt.Fprintln(os.Stderr, `{"sysh":1,"class":"no_input","detail":"interactive logins are not supported; the agent channel speaks `+"`sysh -c '<command>'`"+` only — run 'help' for how this channel works","exit":3}`)
 			return 3
 		}
 		// Script interpreter (§6.10): the kernel execs `sysh <script>`

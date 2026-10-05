@@ -292,7 +292,7 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 	dec := compiled.Match(argv)
 	if !dec.Allowed {
 		ev := withDec(baseEvent, audit.DecisionDeny)
-		detail := "no rule allows this argv"
+		detail := "no rule allows this argv — 'help' explains this channel"
 		if dec.Rule != nil && dec.Rule.Deny {
 			detail = fmt.Sprintf("denied by deny rule %d", dec.RuleIdx)
 			ev.Detail = detail
@@ -304,7 +304,7 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 			if shellOperatorArgv(argv) {
 				detail += " — no shell operators here: send one command per exec (argv is split on whitespace, && ; | are literal words)"
 			} else if hint := absPathHint(compiled, argv[0]); hint != "" {
-				detail = "no rule allows this argv — rules name binaries by absolute path; try " + hint
+				detail = "no rule allows this argv — rules name binaries by absolute path; try " + hint + "; 'help' explains"
 			} else if transferTeaching(pol, argv) {
 				detail = "no rule allows this argv — file transfer needs a policy rule your operator acknowledges (usually scoped to the agent-scripts directory); ask your operator. 'help' explains"
 			}
