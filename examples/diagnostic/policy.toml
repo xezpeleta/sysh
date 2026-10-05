@@ -1,0 +1,320 @@
+# sysh example policy — read-only diagnostician.
+#
+# The agent can look at everything the `sy` user can see and change
+# nothing: every rule below is a read verb, and the default is deny,
+# so `cp`, `mv`, `rm`, `tee`, `apt install`, `systemctl restart`
+# are not "blocked" — they simply have no rule. See
+# examples/diagnostic/README.md for scope, exclusions, and honest
+# limits before installing.
+
+version = 2
+mode = "enforcing"
+
+# ── identity and system ───────────────────────────────────────────────
+
+[[rule]]
+argv = ["/usr/bin/uptime"]
+path = "/usr/bin/uptime"
+
+[[rule]]
+argv = ["/usr/bin/id"]
+path = "/usr/bin/id"
+
+[[rule]]
+argv = ["/usr/bin/whoami"]
+path = "/usr/bin/whoami"
+
+[[rule]]
+argv = ["/usr/bin/hostname"]
+path = "/usr/bin/hostname"
+
+[[rule]]
+argv = ["/usr/bin/hostname", "-f"]
+path = "/usr/bin/hostname"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/uname"]
+path = "/usr/bin/uname"
+
+[[rule]]
+argv = ["/usr/bin/uname", "-a"]
+path = "/usr/bin/uname"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/uname", "-r"]
+path = "/usr/bin/uname"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/date"]
+path = "/usr/bin/date"
+
+[[rule]]
+argv = ["/usr/bin/lscpu"]
+path = "/usr/bin/lscpu"
+
+[[rule]]
+argv = ["/usr/bin/lsusb"]
+path = "/usr/bin/lsusb"
+
+[[rule]]
+argv = ["/usr/sbin/lsmod"]
+path = "/usr/sbin/lsmod"
+
+# ── processes ─────────────────────────────────────────────────────────
+# `ps aux` needs no ack (BSD-style, no leading dash). Anything with an
+# option is enumerated; the rest pattern never matches a leading '-',
+# so option injection is structurally impossible.
+
+[[rule]]
+argv = ["/usr/bin/ps"]
+path = "/usr/bin/ps"
+
+[[rule]]
+argv = ["/usr/bin/ps", "aux"]
+path = "/usr/bin/ps"
+
+[[rule]]
+argv = ["/usr/bin/ps", "auxww"]
+path = "/usr/bin/ps"
+
+[[rule]]
+argv = ["/usr/bin/ps", "-ef"]
+path = "/usr/bin/ps"
+ack = true
+
+# batch mode: no PTY needed, one snapshot, bounded by timeout
+[[rule]]
+argv = ["/usr/bin/top", "-bn1"]
+path = "/usr/bin/top"
+ack = true
+timeout = 10
+
+# ── memory / disk ─────────────────────────────────────────────────────
+
+[[rule]]
+argv = ["/usr/bin/free"]
+path = "/usr/bin/free"
+
+[[rule]]
+argv = ["/usr/bin/free", "-h"]
+path = "/usr/bin/free"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/df"]
+path = "/usr/bin/df"
+
+[[rule]]
+argv = ["/usr/bin/df", "-h"]
+path = "/usr/bin/df"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/lsblk"]
+path = "/usr/bin/lsblk"
+
+# sizes of readable trees: du -sh /var/log/...
+[[rule]]
+argv = ["/usr/bin/du", "-sh"]
+path = "/usr/bin/du"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+ack = true
+
+# vmstat, vmstat 1, vmstat 1 5 (interval and count, digits only)
+[[rule]]
+argv = ["/usr/bin/vmstat"]
+path = "/usr/bin/vmstat"
+rest = "[0-9]+"
+
+# ── network (read verbs only) ─────────────────────────────────────────
+# `ip` mutates through `ip addr add` etc.; the read subcommands are
+# enumerated as exact positions, so no mutation form can match.
+
+[[rule]]
+argv = ["/usr/bin/ss"]
+path = "/usr/bin/ss"
+
+[[rule]]
+argv = ["/usr/bin/ss", "-tuln"]
+path = "/usr/bin/ss"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/ss", "-tulnp"]
+path = "/usr/bin/ss"
+ack = true
+
+[[rule]]
+argv = ["/usr/sbin/ip", "addr"]
+path = "/usr/sbin/ip"
+
+[[rule]]
+argv = ["/usr/sbin/ip", "route"]
+path = "/usr/sbin/ip"
+
+[[rule]]
+argv = ["/usr/sbin/ip", "link"]
+path = "/usr/sbin/ip"
+
+[[rule]]
+argv = ["/usr/sbin/ip", "-s", "link"]
+path = "/usr/sbin/ip"
+ack = true
+
+[[rule]]
+argv = ["/usr/sbin/ip", "neigh"]
+path = "/usr/sbin/ip"
+
+# bounded reachability check, never unbounded
+[[rule]]
+argv = ["/usr/bin/ping", "-c", "3"]
+path = "/usr/bin/ping"
+rest = "[a-zA-Z0-9.][a-zA-Z0-9.\\-]*"
+ack = true
+timeout = 15
+
+# ── services (read verbs only) ────────────────────────────────────────
+# status/is-active/is-enabled/show are queries; restart/stop/mask have
+# no rule. The unit pattern is a fixed position, one unit at a time.
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "status", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "is-active", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "is-enabled", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "show", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "list-units"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "list-unit-files"]
+path = "/usr/bin/systemctl"
+
+# ── files: what `sy` already reads, with the path in the journal ──────
+# Read visibility is the OS file layer's decision (keep `sy` out of
+# every group — README). What the argv layer adds is the audit trail:
+# every cat/grep below journals its full argv, paths included.
+# The pattern admits no leading '-' and no spaces.
+
+[[rule]]
+argv = ["/usr/bin/cat"]
+path = "/usr/bin/cat"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/grep"]
+path = "/usr/bin/grep"
+rest = "[a-zA-Z0-9._/][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/grep", "-i"]
+path = "/usr/bin/grep"
+rest = "[a-zA-Z0-9._/][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/grep", "-n"]
+path = "/usr/bin/grep"
+rest = "[a-zA-Z0-9._/][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/head"]
+path = "/usr/bin/head"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/head", "-n", "[0-9]+"]
+path = "/usr/bin/head"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/tail"]
+path = "/usr/bin/tail"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/tail", "-n", "[0-9]+"]
+path = "/usr/bin/tail"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/stat"]
+path = "/usr/bin/stat"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/wc"]
+path = "/usr/bin/wc"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/wc", "-l"]
+path = "/usr/bin/wc"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/file"]
+path = "/usr/bin/file"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/ls"]
+path = "/usr/bin/ls"
+
+[[rule]]
+argv = ["/usr/bin/ls", "-l"]
+path = "/usr/bin/ls"
+rest = "[a-zA-Z0-9._/][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/ls", "-la"]
+path = "/usr/bin/ls"
+rest = "[a-zA-Z0-9._/][a-zA-Z0-9._/\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/sha256sum"]
+path = "/usr/bin/sha256sum"
+rest = "/[a-zA-Z0-9._][a-zA-Z0-9._/\\-]*"
+
+[[rule]]
+argv = ["/usr/bin/which"]
+path = "/usr/bin/which"
+rest = "[a-zA-Z0-9._][a-zA-Z0-9._\\-]*"
+
+# environment of the session sysh already builds — printenv, never env
+[[rule]]
+argv = ["/usr/bin/printenv"]
+path = "/usr/bin/printenv"
+
+# ── packages (queries only) ───────────────────────────────────────────
+
+[[rule]]
+argv = ["/usr/bin/dpkg", "-l"]
+path = "/usr/bin/dpkg"
+rest = "[a-z0-9][a-z0-9.+\\-]*"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/apt", "list", "--installed"]
+path = "/usr/bin/apt"
+ack = true
