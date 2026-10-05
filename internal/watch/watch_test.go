@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"sync/atomic"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -166,6 +167,42 @@ func TestApprovalPoller(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "req_1" {
 		t.Fatalf("snapshot: %+v", got)
 	}
+}
+
+func TestApprovalPollerWake(t *testing.T) {
+	var calls int32
+	p := NewApprovalPoller(map[string]string{"a": "192.0.2.1:22"}, time.Hour, func(host, addr string) ([]Pending, error) {
+		atomic.AddInt32(&calls, 1)
+		return nil, nil
+	})
+	go p.Run()
+	defer p.Stop()
+	// initial poll happens at Run start
+	deadline := time.Now().Add(time.Second)
+	for atomic.LoadInt32(&calls) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&calls) == 0 {
+		t.Fatal("initial poll never ran")
+	}
+	// a request event wakes the poller well before the hour interval
+	p.Observe(Event{Decision: "request", Argv: []string{"tee"}})
+	deadline = time.Now().Add(time.Second)
+	for atomic.LoadInt32(&calls) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := atomic.LoadInt32(&calls); n < 2 {
+		t.Fatalf("wake did not re-poll: %d calls", n)
+	}
+	// unrelated decisions must not wake
+	p.Observe(Event{Decision: "allow"})
+	time.Sleep(150 * time.Millisecond)
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Fatalf("allow event woke the poller: %d calls", n)
+	}
+	// nil-receiver safe
+	var nilp *ApprovalPoller
+	nilp.Observe(Event{Decision: "request"})
 }
 
 // --- HTTP layer ---

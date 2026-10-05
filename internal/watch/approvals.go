@@ -16,13 +16,13 @@ import (
 
 // Pending is one request waiting for an operator, per `sysh approvals`.
 type Pending struct {
-	Host         string   `json:"host"`
-	ID           string   `json:"id"`
-	Argv         []string `json:"argv"`
-	Key          string   `json:"key"`
-	AgeSec       int      `json:"age_sec"`
-	Expired      bool     `json:"expired"`
-	RemainingSec int      `json:"remaining_sec"` // TTL left, clamped at 0: the panel counts down to it
+	Host         string     `json:"host"`
+	ID           string     `json:"id"`
+	Argv         []string   `json:"argv"`
+	Key          string     `json:"key"`
+	AgeSec       int        `json:"age_sec"`
+	Expired      bool       `json:"expired"`
+	RemainingSec int        `json:"remaining_sec"`   // TTL left, clamped at 0: the panel counts down to it
 	Agent        *AgentInfo `json:"agent,omitempty"` // what the filing agent is doing (agents.go)
 }
 
@@ -73,9 +73,9 @@ func parseApprovals(host string, body []byte) ([]Pending, error) {
 // HTTP layer serves, so the UI's pending panel stays consistent
 // across hosts.
 type ApprovalPoller struct {
-	hosts   []hostEntry
+	hosts    []hostEntry
 	fetchOne fetchOneFunc
-	every   time.Duration
+	every    time.Duration
 
 	// HostState reports a follower's connection state ("following",
 	// "reconnecting", …); nil = poll everything. A host the follower
@@ -88,6 +88,7 @@ type ApprovalPoller struct {
 	latest []Pending
 
 	stopCh chan struct{}
+	wake   chan struct{} // a journal request/approve/reject breaks the interval sleep
 	once   sync.Once
 }
 
@@ -106,22 +107,27 @@ func NewApprovalPoller(hosts map[string]string, every time.Duration, fetchOne fe
 		entries = append(entries, hostEntry{name, addr})
 	}
 	return &ApprovalPoller{
-		hosts:   entries,
+		hosts:    entries,
 		fetchOne: fetchOne,
-		every:   every,
-		stopCh:  make(chan struct{}),
+		every:    every,
+		stopCh:   make(chan struct{}),
+		wake:     make(chan struct{}, 1),
 	}
 }
 
 // Run polls until Stop. A failed host leaves its previous rows out;
 // errors never clear the panel silently to stale data — a failed fetch
-// is simply not represented until it succeeds again.
+// is simply not represented until it succeeds again. A Wake breaks
+// the interval sleep: the pending panel reflects a request the moment
+// the journal carries it, not up to `every` later.
 func (p *ApprovalPoller) Run() {
 	for {
 		p.poll()
 		select {
 		case <-p.stopCh:
 			return
+		case <-p.wake:
+			// a request/approve/reject just journaled — re-poll now
 		case <-time.After(p.every):
 		}
 	}
@@ -144,6 +150,30 @@ func (p *ApprovalPoller) poll() {
 	p.mu.Lock()
 	p.latest = all
 	p.mu.Unlock()
+}
+
+// Wake asks for an immediate re-poll (non-blocking; a wake while
+// already awake coalesces).
+func (p *ApprovalPoller) Wake() {
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Observe folds a journal event into the poller: a request appearing
+// (or an approve/reject resolving one) is exactly when the pending
+// snapshot changed, so the follower's event stream nudges the poller
+// instead of waiting out the interval. Nil-receiver safe, like
+// Follower.Agents.
+func (p *ApprovalPoller) Observe(ev Event) {
+	if p == nil {
+		return
+	}
+	switch ev.Decision {
+	case "request", "approve", "reject":
+		p.Wake()
+	}
 }
 
 // Snapshot returns the latest pending rows.

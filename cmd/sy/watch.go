@@ -9,12 +9,12 @@
 package main
 
 import (
-	"path/filepath"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -96,8 +96,15 @@ func cmdWatch(args []string) int {
 			User:    hc.User,
 			Key:     filepath.Base(hc.Key),
 		}
-		f := watch.NewFollower(name, addr, "-"+since, hub, logger)
+	}
+
+	// The approval poller exists before the followers so they can wake
+	// it (a journaled request/approve/reject breaks the interval sleep).
+	poller := watch.NewApprovalPoller(hostAddrs, watchApprovalsEvery, nil)
+	for name := range hf.Hosts {
+		f := watch.NewFollower(name, hostAddrs[name], "-"+since, hub, logger)
 		f.Agents = agents
+		f.Approvals = poller
 		go f.Follow()
 	}
 
@@ -106,7 +113,6 @@ func cmdWatch(args []string) int {
 		approverKey = hf.Approver.Key
 	}
 
-	poller := watch.NewApprovalPoller(hostAddrs, watchApprovalsEvery, nil)
 	poller.HostState = func(name string) string {
 		for _, st := range hub.Hosts() {
 			if st.Name == name {
@@ -131,15 +137,15 @@ func cmdWatch(args []string) int {
 	go info.Run()
 
 	srv := &watch.Server{
-		Hub:         hub,
-		Pending:     poller.Snapshot,
-		Agents:      agents,
-		Hosts:       hostAddrs,
-		HostMeta:    hostMeta,
+		Hub:           hub,
+		Pending:       poller.Snapshot,
+		Agents:        agents,
+		Hosts:         hostAddrs,
+		HostMeta:      hostMeta,
 		LaunchApprove: watch.RealLaunchApprove,
-		Ceremonies:  watch.NewCeremonyStore(),
+		Ceremonies:    watch.NewCeremonyStore(),
 		SkipChallenge: noChallenge,
-		FetchRequest: watch.RealFetchRequest,
+		FetchRequest:  watch.RealFetchRequest,
 		SignSubmit: func(host, id string, body []byte) (string, error) {
 			return watch.RealSignSubmit(approverKey, host, hostAddrs[host], id, body)
 		},

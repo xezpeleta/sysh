@@ -67,6 +67,12 @@ type Follower struct {
 	// tracker (agents.go). Nil = tracking off.
 	Agents *Agents
 
+	// Approvals wakes the approval poller when a journal event is one
+	// the pending snapshot hinges on (request filed, approved,
+	// rejected) — the panel follows the ceremony in real time, not the
+	// poll interval. Nil = interval polling only.
+	Approvals *ApprovalPoller
+
 	stopOnce sync.Once
 	stopCh   chan struct{}
 }
@@ -156,7 +162,8 @@ func (f *Follower) pump(r io.Reader) error {
 			continue
 		}
 		f.Hub.Add(ev)
-		f.Agents.Observe(ev) // nil-safe
+		f.Agents.Observe(ev)    // nil-safe
+		f.Approvals.Observe(ev) // nil-safe
 	}
 	return sc.Err()
 }

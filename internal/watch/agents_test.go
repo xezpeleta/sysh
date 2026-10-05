@@ -74,6 +74,18 @@ func TestAgentsLifecycle(t *testing.T) {
 	if rows := a.Recent(10); rows[0].State != AgentFiled {
 		t.Fatalf("after re-file: %+v", rows)
 	}
+
+	// Re-file after an approval (deterministic ids recycle: a retry
+	// after the approve-side exec consumed the single use) starts a
+	// new life too — the approval belongs to the previous request.
+	a.Observe(agentEvent(audit.DecisionApprove, argv, key, "operator approved", ts))
+	if rows := a.Recent(10); rows[0].State != AgentApproved {
+		t.Fatalf("after approve (2): %+v", rows)
+	}
+	a.Observe(agentEvent(audit.DecisionRequest, argv, key, "privileged rule requires operator approval", ts))
+	if rows := a.Recent(10); rows[0].State != AgentFiled {
+		t.Fatalf("after re-file post-approval: %+v", rows)
+	}
 }
 
 func TestAgentsNilSafe(t *testing.T) {

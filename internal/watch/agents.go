@@ -123,11 +123,14 @@ func (a *Agents) Observe(ev Event) {
 		e.key, e.argv = ev.Key, ev.Argv
 		e.filedAt = at
 		// A re-file (renewal, or after expiry) means the agent is at
-		// it again; the fetch that may have come before belongs to
-		// the previous life of the same id.
-		if e.state == "" || e.state == AgentExpired || e.state == AgentFetched {
+		// it again; the fetch — or the approval — that may have come
+		// before belongs to the previous life of the same id.
+		if e.state == "" || e.state == AgentExpired || e.state == AgentFetched || e.state == AgentApproved {
 			e.state = AgentFiled
 			e.exit = nil
+			e.polls = 0
+			e.lastPoll = time.Time{}
+			e.approvedAt = time.Time{}
 		}
 	case audit.DecisionApprove:
 		e.approvedAt = at

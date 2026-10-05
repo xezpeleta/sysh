@@ -450,6 +450,7 @@ function maybeAlertFromEvent(ev) {
 bellState();
 
 // ---------- polling loops ----------
+let pendingKick; // debounce for SSE-driven /api/pending refetches
 async function pollHosts() {
   try {
     const r = await fetch("/api/hosts");
@@ -494,6 +495,13 @@ function connect() {
       const ev = JSON.parse(m.data);
       appendEvent(ev);
       maybeAlertFromEvent(ev);
+      // a ceremony event changed the pending snapshot server-side
+      // (the follower wakes the poller); pull it now instead of
+      // waiting out the 5s interval
+      if (ev.decision === "request" || ev.decision === "approve" || ev.decision === "reject") {
+        clearTimeout(pendingKick);
+        pendingKick = setTimeout(pollPending, 150);
+      }
     } catch {}
   };
   es.onerror = () => { /* EventSource auto-reconnects */ };
