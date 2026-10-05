@@ -288,27 +288,31 @@ function alertsOn() {
     && localStorage.getItem("sywatch-alerts") !== "off";
 }
 
+// The bell is drawn, not an emoji: colored glyphs break the page's
+// monochrome language. Stroke icons, page colors, one accent.
+const bellIcon = (off) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>${off ? '<line x1="3" y1="3" x2="21" y2="21"/>' : ""}</svg>`;
+
 function bellState() {
   if (!("Notification" in window)) {
-    bell.textContent = "🔕";
+    bell.innerHTML = bellIcon(true);
     bell.title = "this browser does not support notifications";
     bell.classList.add("blocked");
     return;
   }
   bell.classList.remove("on", "blocked");
   if (Notification.permission === "denied") {
-    bell.textContent = "🔕";
+    bell.innerHTML = bellIcon(true);
     bell.title = "browser alerts blocked — allow notifications for this site in the browser settings";
     bell.classList.add("blocked");
     return;
   }
   if (alertsOn()) {
-    bell.textContent = "🔔";
+    bell.innerHTML = bellIcon(false);
     bell.title = "browser alerts on (beta) — click to turn off";
     bell.classList.add("on");
     return;
   }
-  bell.textContent = "🔕";
+  bell.innerHTML = bellIcon(true);
   bell.title = Notification.permission === "granted"
     ? "browser alerts off — click to turn on"
     : "click to allow browser alerts on new approval requests (beta)";
