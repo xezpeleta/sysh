@@ -33,7 +33,7 @@
 page</a> (Debian 12 / Ubuntu 22.04+). The package creates the <code>sy</code>
 user, installs the sshd drop-in, the tmpfiles.d entries and — if auditd is
 present — UID-scoped audit rules. No debconf, no daemon.</p>
-<pre><code><span class="p">$</span> apt install ./sysh_0.5.0_amd64.deb
+<pre><code><span class="p">$</span> apt install ./sysh_0.6.0_amd64.deb
 <span class="p">$</span> sysh doctor      <span class="c"># 0 failures, 0 warnings before you go further</span></code></pre>
 
 <h2 id="policy"><span class="step">STEP 2</span>Write the policy</h2>
@@ -90,6 +90,17 @@ SSH:</p>
 <code>30</code> approval required, <code>31</code> result unavailable. Each
 exec gets a systemd scope with resource caps; output above the cap trips and
 is recorded.</p>
+<p>The channels are separated by design: the command&rsquo;s stdout streams
+back <strong>untouched</strong> — parse it for data — and the JSON envelope
+above goes to <strong>stderr</strong>. There is no shell on the server, so a
+remote pipe is refused with the reason, and filtering belongs on your side
+of the wire:</p>
+<pre><code><span class="p">$</span> ssh -i agent.key sy@server '/usr/bin/uptime | grep load'
+<span class="out">{"class":"denied","detail":"no shell operators here: send one
+command per exec (argv is split on whitespace, && ; | are literal
+words)","exit":125}</span>
+<span class="p">$</span> ssh -i agent.key sy@server '/usr/bin/uptime' 2&gt;/dev/null | grep load
+<span class="out">load average: 0.18, 0.15, 0.09</span></code></pre>
 
 <h2 id="approval"><span class="step">STEP 5</span>Root on request: approval rules</h2>
 <p>Between &ldquo;never root&rdquo; and &ldquo;pre-authorized root&rdquo;
@@ -212,7 +223,41 @@ runs in <em>your</em> terminal, as <em>you</em>. Lose the token and the
 approver simply stops signing; remove it root-side and the ceremony
 reverts to interactive <code>ssh -t</code> from a root session.</p>
 
-<h2 id="privileged"><span class="step">STEP 6</span>Root verbs: privileged rules</h2>
+<h2 id="scripts"><span class="step">STEP 6</span>Batch work: agent scripts</h2>
+<p>One exec per command is fine for reading; real work comes in batches.
+A root-owned policy field turns a directory into runnable scripts:</p>
+<pre><code>agent_scripts = "/var/lib/sysh/agent-scripts"
+agent_scripts_mode = "lines"   <span class="c"># the default</span></code></pre>
+<p>In <strong>lines mode</strong> a script is data: first line
+<code>#!/usr/bin/sysh</code>, then one command per line — and every line is
+policy-checked and journaled exactly like a direct exec. No shell features
+inside; a refused line stops the script with the teaching detail on
+stderr. The agent uploads scripts through an operator-acknowledged
+<code>rsync</code> rule scoped to the directory — there is no other way
+in.</p>
+<p>In <strong>traced mode</strong> the directory holds real scripts — any
+shebang the operator allows installed — and the argv policy extends into
+the process tree: a ptrace tracer intercepts every <code>execve</code>,
+checks it with the same rules, and a refusal <em>fails the syscall</em>
+(<code>-EPERM</code>) — the interpreter sees &ldquo;Operation not
+permitted&rdquo; and the script&rsquo;s own logic decides whether to go on:</p>
+<pre><code>agent_scripts_mode = "traced"
+
+<span class="c"># in a bash script: the pipe is bash's plumbing, but each side is a checked exec</span>
+/usr/bin/uptime | grep average
+<span class="out">allow argv=["/usr/bin/uptime"]
+deny  argv=["grep" "average"] — bash: /usr/bin/grep: Operation not permitted</span></code></pre>
+<p>Honest limits, stated in the lint and PROJECT.md §6.13: only
+<code>execve</code> is inspected (interpreter builtins are not
+argv-visible), it is argv enforcement — <strong>not sandboxing</strong> —
+and <code>sudo touch /run/sysh/traced-off</code> refuses every traced run
+instantly. amd64 hosts only.</p>
+<p>For humans there is also a small interactive console:
+<code>ssh sy@host</code> with a TTY opens a banner, <code>help</code>, and
+<code>cd</code> navigation state — every line through the same checked,
+journaled pipeline.</p>
+
+<h2 id="privileged"><span class="step">STEP 7</span>Root verbs: privileged rules</h2>
 <p>For work that needs root, the operator pre-authorizes <em>exact</em>
 argvs. Install generates a root-owned sudoers fragment limited to those
 argvs — nothing else:</p>
@@ -267,7 +312,7 @@ a lint error (they mean nothing here), and <code>sysh doctor</code> warns
 about root mode on every run. If you want rollback, snapshot the VM in
 your hypervisor first — outside sysh.</p>
 
-<h2 id="mcp"><span class="step">STEP 7</span>Agent harnesses: <code>sy mcp</code></h2>
+<h2 id="mcp"><span class="step">STEP 8</span>Agent harnesses: <code>sy mcp</code></h2>
 <p>The same package ships <code>sy</code>, the agent-side client. Point
 your MCP-capable harness (Pi, Claude Desktop, anything that speaks
 stdio MCP) at <code>sy mcp</code> and it gets three tools:
@@ -286,7 +331,7 @@ key     = "~/.config/sy/keys/web01.ed25519"</span>
 <span class="p">$</span> ssh-keyscan web01.example.net &gt;&gt; ~/.config/sy/known_hosts  <span class="c"># all key types: servers may present ecdsa first</span>
 <span class="p">$</span> echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | sy mcp</code></pre>
 
-<h2 id="watch"><span class="step">STEP 8</span>Watching everything: <code>sy watch</code></h2>
+<h2 id="watch"><span class="step">STEP 9</span>Watching everything: <code>sy watch</code></h2>
 <p>The journal that makes the record trustworthy makes it watchable.
 <code>sy watch</code> opens one read-only <code>journalctl -t sysh -f</code>
 follow per host in your registry — over the same root SSH channel
@@ -385,8 +430,11 @@ sy watch: open http://127.0.0.1:7321</span>
   <li><strong>PROJECT.md</strong> — the specification: threat model, §6
   gateway, §6.8 privileged execution, two security-review rounds with
   dispositions. <a href="https://github.com/xezpeleta/sysh/blob/main/PROJECT.md">read it ↗</a></li>
-  <li><strong>examples/</strong> — worked profiles like the
-  agent-maintained web server, with OS-side setup.
+  <li><strong>examples/</strong> — three worked policies, validated on
+  real hosts: <em>diagnostic</em> (read-only agent — read-only-ness by
+  omission), <em>operational</em> (diagnose freely, act only through the
+  approval channel), and the <em>webserver</em> maintenance profile with
+  its OS-side setup.
   <a href="https://github.com/xezpeleta/sysh/tree/main/examples">browse them ↗</a></li>
 </ul>
 

@@ -1,3 +1,35 @@
+sysh (0.6.0) unstable; urgency=medium
+
+  * Agent scripts: a root-owned directory of one-command-per-line
+    scripts (#!/usr/bin/sysh), every line policy-checked and
+    journaled like a direct exec (PROJECT.md 6.10).
+  * Traced agent scripts: agent_scripts_mode = "traced" runs any
+    shebang under a ptrace tracer; every execve in the tree is
+    argv-checked, refusals fail the syscall (-EPERM). amd64-only;
+    kill switch /run/sysh/traced-off (6.13).
+  * Interactive console for `ssh sy@host` with a TTY: banner, help,
+    cd navigation; each line through the same pipeline (6.11).
+  * Teaching denies: absolute-path hints, shell-operator and
+    rsync teaching lines, escape-hatch explanations (6.12).
+  * Channel contract documented and taught in-band: child stdout
+    untouched, JSON envelope on stderr (6.4).
+  * Worked example policies: examples/diagnostic (read-only),
+    examples/operational (approval channel), examples/webserver.
+
+ -- Xabier Ezpeleta <xezpeleta@github.com>  Sun, 05 Oct 2026 13:00:00 +0200
+
+sysh (0.5.0) unstable; urgency=medium
+
+  * Agent keys expire: keys.map third field `expires:` RFC3339;
+    expired keys refused pre-argv; sysh auth add --ttl / rotate.
+  * Root mode (mode = "root"): explicit opt-out for disposable
+    hosts; deny rules only, everything else root via one wildcard
+    sudoers grant; journal intact.
+  * sy watch: browser alerts on new approval requests (beta).
+  * Relicensed MIT -> GPLv3.
+
+ -- Xabier Ezpeleta <xezpeleta@github.com>  Sun, 04 Oct 2026 23:00:00 +0200
+
 sysh (0.4.0) unstable; urgency=medium
 
   * Approvals: signed FIDO2-grade channel (§9).

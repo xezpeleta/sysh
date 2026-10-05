@@ -13,8 +13,8 @@
 <body>
 
 <div class="announce">
-  <span class="dot">●</span> v0.5.0 — key expiry &amp; rotation, root mode (the
-  explicit opt-out), GPLv3, watch alerts (beta). <a href="https://github.com/xezpeleta/sysh/releases/tag/v0.5.0">see the release ↗</a>
+  <span class="dot">●</span> v0.6.0 — agent scripts (line &amp; traced under ptrace), the
+  interactive console, teaching denies, worked example policies. <a href="https://github.com/xezpeleta/sysh/releases/tag/v0.6.0">see the release ↗</a>
 </div>
 
 <nav class="nav">
@@ -360,6 +360,10 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
     policy plus ordinary OS permissions (groups, ACLs, ownership) shapes
     access like <em>“read the web server's logs and config, write the
     enumerated files, validate and reload”</em>.</li>
+    <li><strong>Agent scripts, line or traced</strong> — batch work as
+    one-command-per-line scripts, or real interpreters (any shebang)
+    under a ptrace tracer that checks every <code>execve</code> in the
+    tree: the same argv policy, extended into the process tree.</li>
     <li><strong>Debian / Ubuntu</strong> today; it needs nothing beyond
     what a stock server already runs — journald and auditd are already
     there.</li>
@@ -378,9 +382,9 @@ All of it, refusals included, is in journalctl -t sysh.</pre>
     </div>
     <div class="card">
       <h3>Examples</h3>
-      <p>A worked example: the agent-maintained web server — Apache and
-      fail2ban config, logs, validate, reload — with the OS-side setup
-      spelled out.</p>
+      <p>Three worked policies with READMEs: a read-only diagnostician, an
+      operational agent that acts only through approvals, and the
+      agent-maintained web server — each validated on a real host.</p>
       <a class="learn" href="https://github.com/xezpeleta/sysh/tree/main/examples">browse examples ↗</a>
     </div>
     <div class="card">
