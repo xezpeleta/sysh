@@ -145,7 +145,11 @@ func (s *session) runScriptFile(path string, fromArgv []string, base audit.Event
 	if err != nil {
 		ev := withDec(base, audit.DecisionDeny)
 		ev.Detail = err.Error()
-		return deny("script refused: cannot read "+path, ev)
+		// ownership already passed (gateway user or root); unreadable
+		// means root-owned with no other-read bit — teach the fix
+		return deny("script refused: cannot read "+path+
+			" (root-owned files need other-read, e.g. mode 0644;"+
+			" gateway-user-owned 0600 works as-is)", ev)
 	}
 	if len(data) > MaxScriptBytes {
 		ev := withDec(base, audit.DecisionDeny)
