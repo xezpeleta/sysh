@@ -63,10 +63,16 @@ func (h *HostInfoPoller) fetch(addr string) *HostPolicy {
 	}
 	out, err := run(addr, []string{"sysh", "policy", "show", "--json"})
 	if err != nil {
+		if h.Log != nil {
+			h.Log.Printf("hostinfo %s: no answer: %v", addr, err)
+		}
 		return nil
 	}
 	var p HostPolicy
 	if json.Unmarshal(out, &p) != nil || p.Mode == "" {
+		if h.Log != nil {
+			h.Log.Printf("hostinfo %s: unparseable answer: %q", addr, out)
+		}
 		return nil
 	}
 	p.FetchedAt = time.Now()
@@ -87,12 +93,17 @@ func (h *HostInfoPoller) pollOnce() {
 	}
 }
 
-// Run polls immediately, then on the ticker, forever.
+// Run waits for the followers to settle, polls once, then keeps
+// polling on the ticker. The settle delay matters: at startup every
+// follower is briefly "reconnecting" while its journalctl connects,
+// and a first poll in that window would skip the whole fleet and
+// leave the hosts view dark for a full interval.
 func (h *HostInfoPoller) Run() {
 	every := h.Every
 	if every <= 0 {
 		every = 2 * time.Minute
 	}
+	time.Sleep(10 * time.Second)
 	h.pollOnce()
 	t := time.NewTicker(every)
 	defer t.Stop()

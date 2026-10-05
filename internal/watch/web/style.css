@@ -106,7 +106,7 @@ body {
 }
 body.hosts-view .toolbar,
 body.hosts-view .tablewrap { display: none; }
-body.hosts-view .hostgrid { display: grid; }
+body.hosts-view .hostgrid { display: grid; flex: 1; overflow: auto; align-content: start; }
 
 .hostcard {
   background: var(--card);
