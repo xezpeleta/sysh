@@ -1,3 +1,27 @@
+sysh (0.6.2) unstable; urgency=medium
+
+  * Fix: transient scope units now get a unique name per exec — a
+    script or console session is one process, so every line named
+    the same unit and systemd refused to load it ("already loaded",
+    exit 1 on alternating lines).
+  * Fix: help quotes the script shebang — the sentence's semicolon
+    read as part of the line and literal-minded clients copied it.
+  * Fix: a traced refusal that names a denylisted interpreter now
+    says interpreters belong in the shebang, not in an exec.
+  * watch: expired approval requests keep their teaching line for a
+    three-minute grace, then the pending panel hides itself.
+  * watch: host cards count only non-zero rules, color the policy
+    mode and the agent-scripts mode, drop the :22 from addresses.
+  * Fix: a host with no policy answer no longer breaks the grid.
+  * watch: hosts fill within seconds of opening the page (poller
+    settles before first poll; fetch failures are logged).
+  * watch: the priv badge explains itself on hover.
+  * docs: the bash-compatibility spectrum — direct exec, console,
+    lines, traced, root — as a table in usage.html and PROJECT.md,
+    with what each mode gives the operator and the agent.
+
+ -- xezpeleta <xezpeleta@users.noreply.github.com>  Sun, 05 Oct 2026 22:00:00 +0200
+
 sysh (0.6.0) unstable; urgency=medium
 
   * Agent scripts: a root-owned directory of one-command-per-line

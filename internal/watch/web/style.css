@@ -141,6 +141,9 @@ body.hosts-view .hostgrid { display: grid; flex: 1; overflow: auto; align-conten
 .pm-enforcing { color: var(--green); border-color: var(--green); }
 .pm-root { color: var(--red); border-color: var(--red); }
 .pm-permissive { color: var(--amber); border-color: var(--amber); }
+.pm-lines { color: var(--amber); border-color: var(--amber); }
+.pm-traced { color: var(--blue); border-color: var(--blue); }
+.hc-dir { color: var(--muted); font-weight: 400; }
 .hc-error {
   margin-top: 10px;
   color: var(--red);

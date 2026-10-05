@@ -300,6 +300,35 @@ root mode is the honest opt-out: total freedom, journal only, host
 disposable. Moving up the table, the agent gets more shell and you see
 less of <em>how</em> it works, never less of <em>what</em> it runs at the
 argv level — except root mode, where you see only the top.</p>
+
+<h3 id="scripts-choosing">What each mode gives you</h3>
+<p><strong>Direct exec (no script directory at all)</strong> gives the
+operator the tightest loop there is: every command is a separate,
+journaled decision, approval applies per argv, and the denylist is
+enforced with full teaching. It gives the agent one command at a time
+— fine for reading, tedious for anything else. Choose it when the
+work is interactive or rare.</p>
+<p><strong>Lines mode</strong> gives the operator <em>total</em>
+visibility: a script is a plain list of argvs, each line checked and
+journaled like a direct exec, and a refused line stops the run —
+nothing executes past a decision you did not make. It gives the agent
+batching without negotiation: no pipes, no variables, no control
+flow. Choose it when the work is a known, enumerable list of
+commands — inventory, sweeps, checklists.</p>
+<p><strong>Traced mode</strong> gives the agent its natural workflow:
+real bash or python, pipes, variables, loops, control flow — and
+gives the operator every <code>execve</code> in the tree, checked by
+the same rules and journaled with the same pre/post pairs, nested
+included. A refused command fails in-band (<code>-EPERM</code>) and
+the script&rsquo;s own logic decides what happens next. What it does
+<em>not</em> give: sight of interpreter builtins — redirections and
+file writes inside the interpreter are the OS layer&rsquo;s bound
+(the gateway user), not the argv&rsquo;s. Choose it when the agent
+needs logic, not just lists, and you accept that one honest limit.</p>
+<p><strong>Root mode</strong> gives the agent everything and the
+operator a journal of top-level argvs only — the documented opt-out
+for disposable hosts. It is not a script mode; it is the absence of
+one, with the ledger still running.</p>
 <p>For humans there is also a small interactive console:
 <code>ssh sy@host</code> with a TTY opens a banner, <code>help</code>, and
 <code>cd</code> navigation state — every line through the same checked,

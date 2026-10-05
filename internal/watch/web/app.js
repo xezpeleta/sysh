@@ -73,7 +73,7 @@ function renderRow(ev, isNew) {
   const tr = document.createElement("tr");
   if (isNew) tr.className = "new";
   const badge = `<span class="badge ${decisionClass(ev)}">${esc(ev.decision)}</span>` +
-    (ev.priv ? `<span class="badge b-priv">priv</span>` : "");
+    (ev.priv ? `<span class="badge b-priv" title="privileged: this exact argv ran as root under an operator-authorized sudoers grant (approval rules: after the operator approved it)">priv</span>` : "");
   const exit = ev.exit !== null && ev.exit !== undefined ? String(ev.exit) : "·";
   const ms = ev.dur_ms !== null && ev.dur_ms !== undefined ? String(ev.dur_ms) : "·";
   tr.innerHTML =
@@ -166,7 +166,7 @@ function renderHosts() {
         .filter(Boolean).join(" · ") || "no rules";
     const policyBlock = pol
       ? `<div class="hc-row"><span>policy</span><b><span class="pmode pm-${esc(pol.mode)}">${esc(pol.mode)}</span> · ${pol.rules} rules · ${esc(parts)}</b></div>` +
-        (pol.agent_scripts ? `<div class="hc-row"><span>agent scripts</span><b>${esc(pol.agent_scripts_mode)} (${esc(pol.agent_scripts)})</b></div>` : "") +
+        (pol.agent_scripts ? `<div class="hc-row"><span>agent scripts</span><b><span class="pmode pm-${esc(pol.agent_scripts_mode)}">${esc(pol.agent_scripts_mode)}</span> <span class="hc-dir">${esc(pol.agent_scripts)}</span></b></div>` : "") +
         `<div class="hc-row"><span>policy digest</span><b class="hc-digest" title="sha256 (16 hex) of /etc/sysh/policy.toml">${esc(pol.sha256)}</b></div>`
       : `<div class="hc-row"><span>policy</span><b class="hc-muted">unavailable — down, or sysh < 0.6.2</b></div>`;
     const err = h.last_error
