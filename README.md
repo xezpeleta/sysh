@@ -94,6 +94,22 @@ a shell.
   is freedom with a record, not control — after the first exec the
   agent can mint access the journal never sees. Treat the host as
   disposable.
+- **Agent scripts:** the agent's batch workflow without a shell. A
+  policy-declared directory (`agent_scripts`) holds one-command-per-line
+  text scripts (`#!/usr/bin/sysh` first line). Every line is
+  policy-checked and journaled like a direct exec; a denied line
+  aborts the script; bash/python shebangs are refused with teaching.
+  The agent uploads via an acked transfer rule into a drop
+  subdirectory it owns — the directory itself stays root-owned.
+- **An interactive console:** `ssh sy@host` with a PTY opens an argv
+  REPL with its own banner — the MOTD sysh actually controls. One
+  command per line, each through the full pipeline; `cd` is navigation
+  state (journaled), not an action.
+- **A protocol that teaches itself:** `help` is an always-available
+  argv that states the contract, the script directory in force and
+  the honest limits. Denials for shells/interpreters say why and what
+  to do instead — the runtime denylist now refuses them in every mode
+  except root, closing the permissive-mode hole.
 
 ## What it is not
 
@@ -227,6 +243,17 @@ executed: exit=0 in 213ms; the agent fetches the outcome with: sysh-result req_a
 # the agent, read-only:
 $ ssh -i … sy@server.example 'sysh-result req_a1b2c3d4e5f6'
 [approved command output; exit status passes through]'
+
+# batch work, no shell needed: the policy declared agent_scripts,
+# the agent synced a one-command-per-line script into its drop dir:
+$ ssh -i … sy@server.example 'deploy/deploy.sysh'
+[each line checked and journaled like a direct exec; a denied line aborts]
+
+# teaching, on demand — and the interactive console (PTY keys):
+$ ssh -i … sy@server.example 'help'
+$ ssh -ti … sy@server.example
+sysh — agent channel. argv is the unit of trust.
+sy:~> uptime
 ```
 
 Every control operation above is a plain SSH command. There is no daemon,
@@ -240,6 +267,8 @@ optionally, a small MCP bridge for agent harnesses, distributed separately).
    untrusted transport.
 2. **argv is the unit of trust.** No shell, no pipes, no `bash -c`, no
    heredocs through the gateway — and argv is printable ASCII only.
+   Batches are scripts of argvs (one command per line), never
+   interpreter payloads.
 3. **No process in the agent tree can gain privileges** — kernel-enforced
    (`no_new_privs`), not configuration-promised.
 4. **Approval chooses when; policy chooses what.** Elevation happens only
@@ -298,7 +327,11 @@ its §13). What exists today, in this repo:
   no shell semantics), restricted pattern grammar with linter-computed
   first-character sets (option-injection-proof), deny rules with prefix
   semantics, exact-length allow rules with opt-in `rest`, permissive
-  mode (deny rules still apply), builtins (`sy-docs`, `sy-policy`),
+  mode (deny rules still apply), builtins (`sy-docs`, `sy-policy`,
+  `help`), a runtime denylist that refuses shells/interpreters with
+  teaching details in every mode except root, agent scripts
+  (§6.10: one command per line, shebang-gated, recursion-guarded), the
+  interactive argv console (§6.11),
   `PR_SET_NO_NEW_PRIVS` + `PR_SET_DUMPABLE=0` + rlimits + umask 0077,
   scrubbed environment, 1 MiB/stream output cap, timeouts, session-drop
   kill, systemd `--user` scopes with TasksMax/MemoryMax (with fallback),
@@ -309,14 +342,14 @@ its §13). What exists today, in this repo:
   exit, duration, scope, policy SHA-256, mode, phase, truncation), plus
   a `sysh audit tail` viewer. auditd rules for the agent UID ship in the
   deb and install automatically when auditd is present.
-- **Control plane (§4.3):** `sysh auth add/list/remove` (restrict-only
-  keys, fingerprint-bound ids, optional `--ttl` expiry enforced by the
-  gateway — TTL with no certificate authority), `sysh auth rotate`
+- **Control plane (§4.3):** `sysh auth add/list/remove` (restrict or
+  full-console-set keys, fingerprint-bound ids, optional `--ttl` expiry
+  enforced by the gateway — TTL with no certificate authority), `sysh auth rotate`
   (register the new key, then drop the old one), `sysh policy install/lint` (mandatory
   linter: denylist on realpath+basename, pattern safety, path ownership
-  checks, warning class with per-rule `ack`, permissive-mode auditd
-  gate), `sysh doctor` (~20 effective-configuration checks), `sysh
-  lockdown`, `sysh journal-group`.
+  checks, agent-script directory checks, warning class with per-rule
+  `ack`, permissive-mode auditd gate), `sysh doctor` (~20 effective-configuration
+  checks), `sysh lockdown`, `sysh journal-group`.
 - **Packaging:** `debian/` + `build.sh` produce a self-contained `.deb`
   (user setup, tmpfiles.d, sshd drop-in with `sshd -t` validation and
   rollback, auditd rules with UID substitution, `Match all` terminator).

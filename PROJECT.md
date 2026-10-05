@@ -199,8 +199,10 @@ $ ssh root@server.example 'sysh policy install' < server.example.toml
 ```
 
 `sysh auth add` (root): parses the line with a real parser
-(`ssh.ParseAuthorizedKey`), **requires `restrict`**, rejects embedded
-newlines and any option granting command/pty/forwarding/agent access,
+(`ssh.ParseAuthorizedKey`), **requires `restrict` or the full console
+set** (`no-X11-forwarding,no-agent-forwarding,no-port-forwarding,
+no-user-rc` — restrict minus `no-pty`, §6.11), rejects embedded
+newlines and any other option (command/pty/forwarding/agent access),
 optionally requires `from=` (configurable), computes the key fingerprint,
 prompts for a key ID, and writes both the line (`/etc/sysh/authorized_keys`,
 root:root 0644 — sshd reads AuthorizedKeysFile as the target user) and
@@ -235,13 +237,17 @@ Scoped to `Match user sy`:
 AuthorizedKeysFile /etc/sysh/authorized_keys
 AuthenticationMethods publickey
 DisableForwarding yes
-PermitTTY no
+PermitTTY yes
 X11Forwarding no
 AllowAgentForwarding no
 PermitTunnel no
 PermitUserRC no
 ExposeAuthInfo yes
 ```
+
+`PermitTTY yes` (§6.11): a PTY reaches only the gateway — the
+confinement — where every console line is policy-checked. Set it to
+`no` to keep the agent channel `-c`-only.
 
 `sysh doctor` verifies the **effective** configuration with
 `sshd -T -C user=sy,host=<host>,addr=<addr>` (sshd is first-match-wins and
@@ -328,6 +334,9 @@ that can match a leading `-` (no option injection). Examples:
 - `sy-policy` — dump the effective policy.
 - `sysh-result <req>` — fetch the outcome of an approved request
   (read-only, TTL'd; 31 = pending/expired/never approved).
+- `help` — the protocol explains itself (§6.10): the contract, the
+  script directory in force, the honest limits. Journaled as a
+  builtin event like the others.
 
 ### 6.4 Result reporting
 
@@ -548,6 +557,98 @@ first root exec, the agent can mint access the journal never sees**
 as good as the agent's cooperation. Treat the host as disposable; if
 you want rollback, snapshot the VM in your hypervisor first — outside
 `sysh`.
+
+### 6.10 Agent scripts (one command per line)
+
+The agent's batch workflow, kept inside the argv policy. A policy may
+declare an **agent-script directory**:
+
+```toml
+agent_scripts = "/var/lib/sysh/agent-scripts"
+```
+
+A script there is a plain text file: first line `#!/usr/bin/sysh`,
+then **one command per line**. When argv[0] names a file under that
+directory (bare name, relative subpath, or absolute path — symlinks
+resolved, traversal out refused), the gateway runs it as data, never
+exec's it: it reads the file whole (≤ 64 KB, ≤ 1000 commands), checks
+the shebang and the file's ownership, then feeds every line through
+the same decision pipeline as a direct exec — same rules, same
+denylist, same journal pre/post pair per line.
+
+Properties, by construction:
+
+- **No shell semantics exist inside.** No variables, no pipes, no
+  `$(...)`, no expansion — a line is an argv or it is a refusal.
+- **The kernel never honors a foreign shebang**: a `#!/bin/bash`
+  file in the directory is refused with the same teaching the
+  runtime denylist uses. There is no free bash behind the mechanism.
+- **Fail closed on the file**: regular file, owned by the gateway
+  user or root, no group/world-writable bits, read whole before the
+  first line runs (a mid-run rewrite cannot change what executes).
+- **Aborts at the offending line**: a policy-denied line stops the
+  script (exit 125) — later lines never run. A line whose command
+  merely fails (nonzero child exit) does not abort it, like `sh -e`
+  is *not* set.
+- **Recursion refused**: a script that names itself (directly or in
+  a chain) is denied, not looped.
+- The directory itself is root-owned and not group/world-writable
+  (linter SevError at install, doctor re-verifies live). The agent
+  may own files inside — e.g. a sy-owned `drop/` subdirectory for
+  uploads — but never the directory or its path.
+
+The upload workflow stays agent-driven: the operator acks a
+  transfer rule (rsync/scp are warn-class denylist entries,
+  acknowledgeable) scoped to the drop subdirectory, and the agent
+  syncs scripts there. Nothing about the script runtime changes what
+  a transfer may carry: each file still needs the sysh shebang and
+  per-line policy to run.
+
+**What this is not**: it is not a shell, and it does not make python
+usable. Non-exec actions a real shell would perform (redirections,
+`/dev/tcp`, job control) do not exist; interpreters stay denied.
+Agents compute where they live and act here per argv — the script is
+just a batch of argvs.
+
+### 6.11 The interactive console (`ssh sy@host`)
+
+An interactive login (no command, PTY attached) opens an **argv
+REPL** instead of refusing: the gateway prints its own banner — mode,
+key id, script directory, the honest limits — then reads one command
+per line. Every line goes through the same pipeline as a `-c` exec
+(same result lines on stderr, same journal events). `cd` is the only
+verb the console interprets itself — navigation state, not an
+action, journaled as a builtin; the kernel enforces who may chdir
+where, and policy paths are absolute and unaffected. `exit` or EOF
+closes the session.
+
+Two configuration points make it exist:
+
+- The sshd drop-in sets `PermitTTY yes` for the sy user: a PTY
+  reaches only the gateway — the confinement — where every line is
+  policy-checked. An operator who wants the channel `-c`-only sets
+  it back to `no` and interactive logins refuse with `no_input`.
+- Keys registered for console use carry the four negatives of
+  `restrict` minus `no-pty` (`no-X11-forwarding,
+  no-agent-forwarding, no-port-forwarding, no-user-rc`);
+  `sysh auth add` accepts exactly that set or `restrict`, nothing
+  else. `restrict` keys simply never get a PTY.
+
+The banner is the MOTD sysh fully controls (sshd's own MOTD prints
+before it on interactive logins; non-interactive `-c` sessions never
+see any MOTD, which is why `help` exists as an argv).
+
+### 6.12 Runtime denylist (teaching refuses)
+
+The linter has always refused rules for shells, interpreters and
+execution wrappers (SevError, not acknowledgeable). Since v0.6 the
+gateway enforces the same list **at run time, in every mode except
+root**: resolving argv[0] (fixed PATH for bare names, symlinks
+followed) and refusing with a teaching detail — what the name is,
+why it is structural, and what to do instead (one command per exec,
+or a sysh script; `'help' explains`). This closes the permissive-mode
+hole where `bash` would otherwise have run freely, and makes every
+deny self-explanatory to the agent that hits it.
 
 ### 8.1 Event model
 

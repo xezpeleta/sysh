@@ -117,10 +117,20 @@ func authAdd(ttl time.Duration, extra []string) int {
 		return 1
 	}
 	if line == "" {
-		fmt.Fprintln(os.Stderr, "sysh auth add: empty input (expected: restrict [from=\"…\"] <type> <base64> <key-id>)")
+		fmt.Fprintln(os.Stderr, "sysh auth add: empty input (expected: restrict|console-set [from=\"…\"] <type> <base64> <key-id>)")
 		return 1
 	}
 	return registerKey(line, ttl)
+}
+
+// consoleSet reports whether o is one of the four console-key
+// negatives (restrict minus no-pty).
+func consoleSet(o string) bool {
+	switch o {
+	case "no-X11-forwarding", "no-agent-forwarding", "no-port-forwarding", "no-user-rc":
+		return true
+	}
+	return false
 }
 
 // registerKey validates and installs one authorized_keys line (the
@@ -132,8 +142,17 @@ func registerKey(line string, ttl time.Duration) int {
 		return 1
 	}
 
-	// Option allowlist: restrict (required) + from= only.
+	// Option allowlist: restrict, or the explicit console set (the
+	// same negatives as restrict minus no-pty, for keys that may open
+	// the interactive argv console §6.11 — a PTY reaches only the
+	// gateway, where every line is policy-checked). Plus from= only.
 	hasRestrict := false
+	console := map[string]bool{
+		"no-X11-forwarding":   false,
+		"no-agent-forwarding": false,
+		"no-port-forwarding":  false,
+		"no-user-rc":          false,
+	}
 	var from string
 	for _, o := range opts {
 		switch {
@@ -141,14 +160,24 @@ func registerKey(line string, ttl time.Duration) int {
 			hasRestrict = true
 		case strings.HasPrefix(o, "from="):
 			from = o
+		case consoleSet(o):
+			console[o] = true
 		default:
-			fmt.Fprintf(os.Stderr, "sysh auth add: refusing option %q (only restrict and from= are accepted)\n", o)
+			fmt.Fprintf(os.Stderr, "sysh auth add: refusing option %q (restrict, the console set, or from= are accepted)\n", o)
 			return 1
 		}
 	}
 	if !hasRestrict {
-		fmt.Fprintln(os.Stderr, "sysh auth add: key line must carry the restrict option")
-		return 1
+		// console keys must carry all four negatives — anything less
+		// would widen the channel beyond what restrict allows
+		complete := true
+		for _, v := range console {
+			complete = complete && v
+		}
+		if !complete {
+			fmt.Fprintln(os.Stderr, "sysh auth add: key line must carry restrict, or the full console set (no-X11-forwarding,no-agent-forwarding,no-port-forwarding,no-user-rc)")
+			return 1
+		}
 	}
 
 	fingerprint := ssh.FingerprintSHA256(key)
@@ -184,8 +213,13 @@ func registerKey(line string, ttl time.Duration) int {
 	// authorized_keys options are comma-separated — OpenSSH's parser
 	// accepts `restrict from=…` visually but then fails to bind the key
 	// (verified live against Debian 12 sshd 9.2).
+	// Console keys (no restrict, full console set) keep their four
+	// negatives, canonically ordered — a PTY reaches only the gateway.
 	canon := strings.TrimRight(string(ssh.MarshalAuthorizedKey(key)), "\n")
 	entry := "restrict"
+	if !hasRestrict {
+		entry = "no-X11-forwarding,no-agent-forwarding,no-port-forwarding,no-user-rc"
+	}
 	if from != "" {
 		entry += "," + from
 	}

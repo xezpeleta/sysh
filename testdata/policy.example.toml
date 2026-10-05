@@ -9,6 +9,13 @@ version = 2
 host = "example-host"
 mode = "enforcing"          # enforcing | permissive (permissive: auditd mandatory)
 
+# Agent scripts (§6.10), optional: a directory of one-command-per-line
+# scripts. Every line is policy-checked and journaled like a direct
+# exec; the first line must be #!/usr/bin/sysh. The directory must be
+# root-owned and not group/world-writable; files inside may be owned
+# by sy (e.g. a sy-owned drop/ subdirectory for agent uploads).
+# agent_scripts = "/var/lib/sysh/agent-scripts"
+
 # --- the canonical allow: read-only service status
 [[rule]]
 argv = ["/usr/bin/systemctl", "status", "[a-z0-9@._][a-z0-9@._\\-]*"]

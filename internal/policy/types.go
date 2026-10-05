@@ -24,7 +24,12 @@ type Policy struct {
 	Host    string `toml:"host"`
 	Mode    string `toml:"mode"`
 	Timeout int    `toml:"timeout"` // root mode only: per-exec bound in seconds
-	Rules   []Rule `toml:"rule"`
+	// AgentScripts names a directory of agent-owned line scripts
+	// (§6.10). Scripts there run one command per line through the
+	// gateway; the directory itself must be root-owned and not
+	// group/world-writable — the linter and doctor enforce that.
+	AgentScripts string `toml:"agent_scripts"`
+	Rules        []Rule `toml:"rule"`
 }
 
 // Rule is one allow or deny rule.

@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/xezpeleta/sysh/internal/control"
 	"github.com/xezpeleta/sysh/internal/gateway"
 )
@@ -49,14 +51,28 @@ func run() int {
 	}
 
 	// Non-root invocations that are not `-c` are protocol violations:
-	// the agent channel may only speak `sysh -c '<command>'`. An
-	// interactive login (no -c at all) lands here too.
+	// the agent channel may only speak `sysh -c '<command>'` — with
+	// two exceptions, both still the unprivileged gateway:
 	if os.Geteuid() != 0 {
 		if len(args) == 0 {
+			// Interactive console (§6.11): `ssh sy@host` with no command
+			// and a TTY attached. The banner is the MOTD; each line is a
+			// policy-checked exec like any other.
+			if stdinIsTTY() {
+				return consoleMain()
+			}
 			fmt.Fprintln(os.Stderr, `{"sysh":1,"class":"no_input","detail":"interactive logins are not supported; the agent channel speaks `+"`sysh -c '<command>'`"+` only","exit":3}`)
-		} else {
-			fmt.Fprintf(os.Stderr, `{"sysh":1,"class":"malformed","detail":"unexpected gateway invocation: %v","exit":3}`+"\n", args)
+			return 3
 		}
+		// Script interpreter (§6.10): the kernel execs `sysh <script>`
+		// when the shebang says #!/usr/bin/sysh (an operator script
+		// allowed by an exact rule).
+		if len(args) == 1 {
+			if fi, err := os.Stat(args[0]); err == nil && fi.Mode().IsRegular() {
+				return scriptMain(args[0])
+			}
+		}
+		fmt.Fprintf(os.Stderr, `{"sysh":1,"class":"malformed","detail":"unexpected gateway invocation: %v","exit":3}`+"\n", args)
 		return 3
 	}
 
@@ -69,6 +85,32 @@ func run() int {
 // lives here — not inside gateway.Run — so tests calling gateway.Run
 // never re-exec the test binary.
 func gatewayMain(cmd string) int {
+	if code := gatewayPreamble(); code != 0 {
+		return code
+	}
+	return gateway.Run(gateway.ProdConfig(), cmd)
+}
+
+// scriptMain is the interpreter entry point (§6.10).
+func scriptMain(path string) int {
+	if code := gatewayPreamble(); code != 0 {
+		return code
+	}
+	return gateway.RunScriptFile(gateway.ProdConfig(), path)
+}
+
+// consoleMain is the interactive entry point (§6.11).
+func consoleMain() int {
+	if code := gatewayPreamble(); code != 0 {
+		return code
+	}
+	return gateway.RunConsole(gateway.ProdConfig())
+}
+
+// gatewayPreamble applies the containment bits shared by every
+// gateway entry (-c, script, console). Fail closed: any setup error
+// refuses the session.
+func gatewayPreamble() int {
 	cfg := gateway.ProdConfig()
 
 	// NoNewPrivs is skipped only when the installed policy declares
@@ -90,7 +132,15 @@ func gatewayMain(cmd string) int {
 		return 125
 	}
 	gateway.Umask0077()
-	return gateway.Run(cfg, cmd)
+	return 0
+}
+
+// stdinIsTTY reports whether stdin is a terminal (the interactive
+// console only exists on a real TTY — piped stdin stays the -c-only
+// protocol).
+func stdinIsTTY() bool {
+	_, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
+	return err == nil
 }
 
 // selfCheck applies and verifies the containment bits.

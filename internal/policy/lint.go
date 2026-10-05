@@ -62,6 +62,19 @@ func Lint(p *Policy, fs FS) []Finding {
 		findings = append(findings, Finding{SevWarning, -1, "mode not set; defaulting to enforcing"})
 	}
 
+	// Agent scripts directory (§6.10): if declared, it must be a
+	// root-owned directory with no group/world-write anywhere on the
+	// path — the agent owns the files inside, never the directory
+	// itself.
+	if p.AgentScripts != "" {
+		if err := checkAgentScriptsDir(fs, p.AgentScripts); err != nil {
+			findings = append(findings, Finding{SevError, -1, err.Error()})
+		} else {
+			findings = append(findings, Finding{SevInfo, -1,
+				"agent_scripts: every line of every script there is policy-checked and journaled like a direct exec"})
+		}
+	}
+
 	hasPrivileged := false // any privileged rule (standing or approval)
 	hasStanding := false   // privileged without per-exec approval: sudoers grant + NNP off
 	hasApproval := false
@@ -294,4 +307,52 @@ func checkPath(fs FS, path string) error {
 
 func ownedByRoot(fi os.FileInfo) bool {
 	return fi.Sys() != nil && statUID(fi) == 0
+}
+
+// checkAgentScriptsDir verifies the agent-script directory (§6.10):
+// absolute, exists, root-owned, not group/world-writable, and every
+// ancestor the same. The files inside may be agent-owned — the
+// directory and its path may never be agent-controlled.
+func checkAgentScriptsDir(fs FS, dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("agent_scripts %q must be absolute", dir)
+	}
+	fi, err := fs.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("agent_scripts %q: %v", dir, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("agent_scripts %q: not a directory", dir)
+	}
+	if !ownedByRoot(fi) {
+		return fmt.Errorf("agent_scripts %q: not owned by root", dir)
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("agent_scripts %q: group/world-writable", dir)
+	}
+	real, err := fs.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("agent_scripts %q: realpath: %v", dir, err)
+	}
+	d := filepath.Dir(real)
+	for {
+		di, err := fs.Lstat(d)
+		if err != nil {
+			return fmt.Errorf("agent_scripts ancestor %q: %v", d, err)
+		}
+		if !di.IsDir() {
+			return fmt.Errorf("agent_scripts ancestor %q: not a directory", d)
+		}
+		if !ownedByRoot(di) {
+			return fmt.Errorf("agent_scripts ancestor %q: not owned by root", d)
+		}
+		if di.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("agent_scripts ancestor %q: group/world-writable", d)
+		}
+		if d == "/" {
+			break
+		}
+		d = filepath.Dir(d)
+	}
+	return nil
 }

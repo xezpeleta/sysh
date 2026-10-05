@@ -61,6 +61,7 @@ type Config struct {
 	Stderr      io.Writer
 	Getenv      func(string) string
 	Now         func() time.Time
+	Dir         string // working directory for children (default: the sy home)
 }
 
 // Production configuration.
@@ -88,12 +89,45 @@ func ProdConfig() Config {
 // returns the process exit code. Every terminal outcome emits one
 // result line on stderr and (best effort pre/post) journal events.
 func Run(cfg Config, cmd string) int {
+	s, code, ok := startSession(cfg)
+	if !ok {
+		return code
+	}
+	c, _ := s.command(cmd)
+	return c
+}
+
+// session is one gateway session: a single `-c` command, a script
+// run, or an interactive console. Identity, lockdown, key expiry and
+// the policy are resolved once per session; every command inside —
+// typed, scripted, or piped — goes through the same decision
+// pipeline, so a script line and a direct exec are indistinguishable
+// to the policy and to the journal.
+type session struct {
+	cfg      Config
+	ident    Identity
+	start    time.Time
+	emit     func(audit.Event) error
+	pol      *policy.Policy
+	compiled *policy.Compiled
+	sha      string
+	polErr   error           // policy load/compile failure, fail closed
+	running  map[string]bool // scripts currently executing (recursion guard)
+}
+
+// startSession performs the once-per-session work: identity, the
+// emit/deny plumbing, the lockdown tripwire, key expiry, and the
+// fail-closed policy load. It returns (nil, exitCode, false) when the
+// session must not run any command at all.
+func startSession(cfg Config) (*session, int, bool) {
 	start := cfg.Now()
 
 	// Identity is read first thing (§5), before any child exists.
 	ident := ReadIdentity(cfg.Getenv, os.ReadFile, cfg.KeysMapPath)
 
-	emit := func(ev audit.Event) error {
+	s := &session{cfg: cfg, ident: ident, start: start}
+
+	s.emit = func(ev audit.Event) error {
 		if cfg.Sink == nil {
 			return nil
 		}
@@ -107,18 +141,20 @@ func Run(cfg Config, cmd string) int {
 		return cfg.Sink.Emit(ev)
 	}
 	deny := func(class, detail string, exit int, ev audit.Event) int {
-		_ = emit(ev)
+		_ = s.emit(ev)
 		result.Write(cfg.Stderr, class, detail, ident.KeyID, exit)
 		return exit
 	}
 
 	// Lockdown (§6.5): any local user may trip it; root clears it.
 	if _, err := os.Lstat(cfg.Tripwire); err == nil {
-		return deny(result.ClassLockdown, "lockdown tripwire is present; operator must clear it",
+		code := deny(result.ClassLockdown, "lockdown tripwire is present; operator must clear it",
 			result.ExitLockdown, audit.Event{Decision: audit.DecisionLockdown, Detail: "tripwire present"})
+		return nil, code, false
 	} else if !os.IsNotExist(err) {
-		return deny(result.ClassInternal, fmt.Sprintf("tripwire check failed: %v", err),
+		code := deny(result.ClassInternal, fmt.Sprintf("tripwire check failed: %v", err),
 			result.ExitDenied, audit.Event{Decision: audit.DecisionInternal, Detail: err.Error()})
+		return nil, code, false
 	}
 
 	// Key expiry (§5): keys.map may carry an "expires:" date for the
@@ -127,27 +163,70 @@ func Run(cfg Config, cmd string) int {
 	// refused like any other deny, with the same journal record.
 	if !ident.Expires.IsZero() && !cfg.Now().Before(ident.Expires) {
 		detail := "key " + ident.KeyID + " expired on " + ident.Expires.UTC().Format(time.RFC3339) + " (rotate: sysh auth rotate)"
-		return deny(result.ClassDenied, detail, result.ExitDenied,
+		code := deny(result.ClassDenied, detail, result.ExitDenied,
 			audit.Event{Decision: audit.DecisionDeny, Detail: "key expired"})
+		return nil, code, false
+	}
+
+	return s, 0, true
+}
+
+// loadPolicy resolves the policy once per session, lazily on first
+// use, so denial events can still carry the argv that was refused.
+func (s *session) loadPolicy() (*policy.Policy, *policy.Compiled, string, error) {
+	if s.pol != nil || s.polErr != nil {
+		return s.pol, s.compiled, s.sha, s.polErr
+	}
+	pol, sha, _, err := policy.Load(s.cfg.PolicyPath, s.cfg.PolicyOwner)
+	if err != nil {
+		s.polErr = err
+		return nil, nil, "", err
+	}
+	compiled, err := policy.Compile(pol)
+	if err != nil {
+		s.polErr = err
+		return nil, nil, "", err
+	}
+	s.pol, s.compiled, s.sha = pol, compiled, sha
+	return pol, compiled, sha, nil
+}
+
+// command runs one command string through the full decision
+// pipeline and returns its exit code. denied reports whether the
+// refusal came from sysh itself (policy deny, malformed argv, ...
+// exit 125/3) as opposed to the child's own exit code — scripts use
+// it to abort at the offending line.
+func (s *session) command(cmd string) (code int, denied bool) {
+	code, denied = s.commandChecked(cmd)
+	return code, denied
+}
+
+// commandChecked is command with the denial flag; Run keeps the
+// plain-int surface for the `-c` path.
+func (s *session) commandChecked(cmd string) (int, bool) {
+	cfg, ident := s.cfg, s.ident
+	start := s.start
+	emit := s.emit
+	deny := func(class, detail string, exit int, ev audit.Event) (int, bool) {
+		_ = emit(ev)
+		result.Write(cfg.Stderr, class, detail, ident.KeyID, exit)
+		return exit, true
 	}
 
 	// argv is the unit of trust (§6.1).
 	argv, err := SplitCommand(cmd)
 	if err != nil {
-		return deny(result.ClassMalformed, err.Error(), result.ExitMalformed,
+		code, _ := deny(result.ClassMalformed, err.Error(), result.ExitMalformed,
 			audit.Event{Decision: audit.DecisionMalformed, Detail: err.Error()})
+		return code, true
 	}
 
 	// Load the policy fail-closed (§7): root-owned, single buffer.
-	pol, sha, _, err := policy.Load(cfg.PolicyPath, cfg.PolicyOwner)
-	if err != nil {
-		return deny(result.ClassDenied, "policy unavailable (fail closed): "+err.Error(),
-			result.ExitDenied, audit.Event{Decision: audit.DecisionInternal, Detail: err.Error(), Argv: argv})
-	}
-	compiled, err := policy.Compile(pol)
-	if err != nil {
-		return deny(result.ClassDenied, "policy uncompilable (fail closed): "+err.Error(),
-			result.ExitDenied, audit.Event{Decision: audit.DecisionInternal, Detail: err.Error(), Argv: argv})
+	pol, compiled, sha, perr := s.loadPolicy()
+	if perr != nil {
+		code, _ := deny(result.ClassDenied, "policy unavailable (fail closed): "+perr.Error(),
+			result.ExitDenied, audit.Event{Decision: audit.DecisionInternal, Detail: perr.Error(), Argv: argv})
+		return code, true
 	}
 
 	baseEvent := audit.Event{
@@ -155,6 +234,39 @@ func Run(cfg Config, cmd string) int {
 		PolicySHA: sha,
 		Mode:      pol.Mode,
 	}
+
+	// `help` (§6.3): the protocol teaches itself. Always allowed,
+	// read-only, and it needs the policy in force to tell the truth
+	// about scripts and limits — so it sits after the fail-closed load.
+	if argv[0] == "help" && len(argv) == 1 {
+		return s.runHelp(baseEvent)
+	}
+
+	// Runtime escape-hatch denylist (§7): the linter refuses rules for
+	// these names at install time; this second check catches them at
+	// run time in every mode except root — closing, among others, the
+	// permissive-mode hole where `bash` would otherwise run freely.
+	// The refusal teaches: the detail says what to do instead.
+	if pol.Mode != policy.ModeRoot {
+		if hit := denylistHitForArgv0(argv); hit != nil && !hit.Warn {
+			detail := escapeHatchDetail(argv[0], hit)
+			ev := withDec(baseEvent, audit.DecisionDeny)
+			ev.Detail = detail
+			code, _ := deny(result.ClassDenied, detail, result.ExitDenied, ev)
+			return code, true
+		}
+	}
+
+	// Agent scripts (§6.10): argv[0] naming a file under the policy's
+	// agent-script directory runs as a line script — one command per
+	// line, every line through this same pipeline. The gateway never
+	// execs the file, so the kernel never honors a foreign shebang.
+	if pol.AgentScripts != "" {
+		if p, ok := agentScriptPath(pol.AgentScripts, argv[0]); ok {
+			return s.runScriptFile(p, argv, baseEvent)
+		}
+	}
+
 	if d := compiled.Match(argv); d.RuleIdx >= 0 {
 		// attach the matched rule index to every event about this argv
 		idx := d.RuleIdx
@@ -163,10 +275,10 @@ func Run(cfg Config, cmd string) int {
 
 	// Builtins (§6.3): always allowed, read-only.
 	if b := argv[0]; b == "sy-docs" || b == "sy-policy" {
-		return runBuiltin(cfg, emit, argv, baseEvent)
+		return runBuiltin(cfg, emit, argv, baseEvent), false
 	}
 	if argv[0] == "sysh-result" {
-		return serveResult(cfg, emit, ident, argv, baseEvent)
+		return serveResult(cfg, emit, ident, argv, baseEvent), false
 	}
 
 	dec := compiled.Match(argv)
@@ -177,7 +289,8 @@ func Run(cfg Config, cmd string) int {
 			detail = fmt.Sprintf("denied by deny rule %d", dec.RuleIdx)
 			ev.Detail = detail
 		}
-		return deny(result.ClassDenied, detail, result.ExitDenied, ev)
+		code, _ := deny(result.ClassDenied, detail, result.ExitDenied, ev)
+		return code, true
 	}
 
 	// Resolve the binary path.
@@ -191,8 +304,9 @@ func Run(cfg Config, cmd string) int {
 		if lpErr != nil {
 			ev := withDec(baseEvent, audit.DecisionDeny)
 			ev.Detail = lpErr.Error()
-			return deny(result.ClassDenied, "cannot resolve command: "+lpErr.Error(),
+			code, _ := deny(result.ClassDenied, "cannot resolve command: "+lpErr.Error(),
 				result.ExitDenied, ev)
+			return code, true
 		}
 	}
 
@@ -207,7 +321,7 @@ func Run(cfg Config, cmd string) int {
 	if dec.Rule != nil && dec.Rule.Privileged && dec.Rule.Approval {
 		// Approval rules (§9) never execute in the gateway: the argv
 		// is parked in the drop box for a root-side human decision.
-		return requestApproval(cfg, emit, ident, argv, dec, baseEvent)
+		return requestApproval(cfg, emit, ident, argv, dec, baseEvent), false
 	}
 
 	if dec.Rule != nil && dec.Rule.Privileged {
@@ -222,7 +336,8 @@ func Run(cfg Config, cmd string) int {
 		if werr != nil {
 			ev := withDec(baseEvent, audit.DecisionInternal)
 			ev.Detail = werr.Error()
-			return deny(result.ClassInternal, werr.Error(), result.ExitDenied, ev)
+			code, _ := deny(result.ClassInternal, werr.Error(), result.ExitDenied, ev)
+			return code, true
 		}
 	}
 
@@ -239,7 +354,8 @@ func Run(cfg Config, cmd string) int {
 		if werr != nil {
 			ev := withDec(baseEvent, audit.DecisionInternal)
 			ev.Detail = werr.Error()
-			return deny(result.ClassInternal, werr.Error(), result.ExitDenied, ev)
+			code, _ := deny(result.ClassInternal, werr.Error(), result.ExitDenied, ev)
+			return code, true
 		}
 	}
 
@@ -248,11 +364,12 @@ func Run(cfg Config, cmd string) int {
 	pre := withDec(baseEvent, audit.DecisionAllow)
 	pre.Phase = "pre"
 	if err := emit(pre); err != nil {
-		return deny(result.ClassDenied, "audit sink unavailable (fail closed): "+err.Error(),
+		code, _ := deny(result.ClassDenied, "audit sink unavailable (fail closed): "+err.Error(),
 			result.ExitDenied, audit.Event{Decision: audit.DecisionInternal, Detail: err.Error(), Argv: argv})
+		return code, true
 	}
 
-	return execChild(cfg, emit, ident, argv, path, dec, timeout, start, baseEvent)
+	return execChild(cfg, emit, ident, argv, path, dec, timeout, start, baseEvent), false
 }
 
 // SudoPath is where the wrapper expects sudo (Debian/Ubuntu layout).
@@ -337,7 +454,10 @@ func execChild(cfg Config, emit func(audit.Event) error, ident Identity, argv []
 		cmd = exec.Command(path, argv[1:]...)
 		cmd.Env = scrubbedEnv(cfg.HomeDir)
 	}
-	cmd.Dir = workingDir(cfg.HomeDir)
+	cmd.Dir = cfg.Dir
+	if cmd.Dir == "" {
+		cmd.Dir = workingDir(cfg.HomeDir)
+	}
 	cmd.Stdin = cfg.Stdin
 
 	stdoutR, stdoutW, err := os.Pipe()
@@ -525,6 +645,32 @@ func workingDir(home string) string {
 		return home
 	}
 	return "/"
+}
+
+// denylistHitForArgv0 evaluates argv[0] against the escape-hatch
+// denylist (§7) at run time: best-effort realpath (a fixed-PATH
+// lookup when the name is bare), then basename and full argv.
+func denylistHitForArgv0(argv []string) *policy.DenylistHit {
+	name := argv[0]
+	real := name
+	if !strings.Contains(name, "/") {
+		if p, err := lookPathFixed(name); err == nil {
+			real = p
+		}
+	}
+	if rp, err := filepath.EvalSymlinks(real); err == nil {
+		real = rp
+	}
+	return policy.CheckDenylist(real, filepath.Base(real), argv)
+}
+
+// escapeHatchDetail is the teaching refusal for denylisted names at
+// run time: it says why and what to do instead. An agent that hits
+// this can self-correct on the next attempt.
+func escapeHatchDetail(name string, hit *policy.DenylistHit) string {
+	detail := fmt.Sprintf("%s is not executable on this host — it is an escape hatch (%s): it would run commands this policy never sees", name, hit.Reason)
+	detail += ". Run commands one per exec, or batch them in a sysh script — one command per line, first line #!/usr/bin/sysh. 'help' explains"
+	return detail
 }
 
 // lookPathFixed resolves name against the fixed PATH only.

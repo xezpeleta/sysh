@@ -258,6 +258,20 @@ func cmdDoctor(args []string) int {
 	} else {
 		warn("policy", "no policy installed (agent channel will fail closed)")
 	}
+
+	// Agent scripts directory (§6.10): the policy may declare one.
+	// The linter already gates it at install; here we re-verify the
+	// live filesystem, because directories drift.
+	if installedPolicy != nil && installedPolicy.AgentScripts != "" {
+		d := installedPolicy.AgentScripts
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			fail("agent_scripts", d+" missing — scripts there will fail closed")
+		} else if fi.Mode().Perm()&0o022 != 0 {
+			fail("agent_scripts", d+" group/world-writable")
+		} else {
+			ok("agent_scripts", d)
+		}
+	}
 	auditActive := auditRulesActive()
 	switch {
 	case auditActive:

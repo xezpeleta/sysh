@@ -2,6 +2,7 @@ package policy
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -435,4 +436,79 @@ func TestMatchRootMode(t *testing.T) {
 	if dec := c.Match([]string{"/usr/bin/rm", "-rf", "/"}); dec.Allowed {
 		t.Error("deny rule must still deny in root mode")
 	}
+}
+
+func lintDoc(agentScripts string) string {
+	doc := "version = 2\nhost = \"t\"\nmode = \"enforcing\"\n"
+	if agentScripts != "" {
+		doc += "agent_scripts = \"" + agentScripts + "\"\n"
+	}
+	return doc
+}
+
+func TestLintAgentScriptsOK(t *testing.T) {
+	fs := newMemFS().addDir("/var/lib/sysh/agent-scripts", 0o755, 0)
+	p, err := Parse([]byte(lintDoc("/var/lib/sysh/agent-scripts")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings := Lint(p, fs)
+	for _, f := range findings {
+		if f.Severity == SevError {
+			t.Fatalf("unexpected error: %+v", f)
+		}
+	}
+	found := false
+	for _, f := range findings {
+		if f.Severity == SevInfo && strings.Contains(f.Msg, "agent_scripts") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected info note about agent_scripts, got %+v", findings)
+	}
+}
+
+func TestLintAgentScriptsMissing(t *testing.T) {
+	// memFS synthesizes undeclared parents, so use the real FS with a
+	// path that genuinely does not exist.
+	fs := RealFS()
+	p, err := Parse([]byte(lintDoc(filepath.Join(t.TempDir(), "nope"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range Lint(p, fs) {
+		if f.Severity == SevError && strings.Contains(f.Msg, "agent_scripts") {
+			return
+		}
+	}
+	t.Fatal("missing dir must be a SevError")
+}
+
+func TestLintAgentScriptsWorldWritable(t *testing.T) {
+	fs := newMemFS().addDir("/var/lib/sysh/agent-scripts", 0o777, 0)
+	p, err := Parse([]byte(lintDoc("/var/lib/sysh/agent-scripts")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range Lint(p, fs) {
+		if f.Severity == SevError && strings.Contains(f.Msg, "group/world-writable") {
+			return
+		}
+	}
+	t.Fatal("world-writable dir must be a SevError")
+}
+
+func TestLintAgentScriptsNotRootOwned(t *testing.T) {
+	fs := newMemFS().addDir("/var/lib/sysh/agent-scripts", 0o755, 1000)
+	p, err := Parse([]byte(lintDoc("/var/lib/sysh/agent-scripts")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range Lint(p, fs) {
+		if f.Severity == SevError && strings.Contains(f.Msg, "not owned by root") {
+			return
+		}
+	}
+	t.Fatal("non-root-owned dir must be a SevError")
 }
