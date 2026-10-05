@@ -13,7 +13,10 @@
     <span class="wordmark"><span class="w-s">sy</span> watch</span>
     <span class="sub">what agents are doing, everywhere, right now</span>
   </div>
-  <div class="hostbar" id="hostbar"><span class="pill idle">no hosts</span></div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="activity">activity</button>
+    <button class="tab" data-view="hosts">hosts</button>
+  </nav>
   <div class="topright">
     <span class="pending-count" id="pendingcount"></span>
     <button class="bell" id="bellToggle" title="click to allow browser alerts on new approval requests (beta)">🔕</button>
@@ -52,6 +55,8 @@
   </table>
   <div class="empty" id="empty">waiting for events…</div>
 </main>
+
+<div class="hostgrid" id="hostgrid"></div>
 
 <div id="ceremony" class="ceremony" hidden>
   <div class="ceremony-box" role="dialog" aria-label="approval ceremony">

@@ -10,6 +10,7 @@
 package watch
 
 import (
+	"sort"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,11 @@ type Server struct {
 	// Hosts maps known host names to addresses; the launch endpoint
 	// refuses anything not in the registry.
 	Hosts map[string]string
+
+	// HostMeta carries hosts.toml facts (address, user, key) for the
+	// hosts view. Optional; without it /api/hosts reports connection
+	// status only.
+	HostMeta map[string]HostMeta
 
 	// LaunchApprove opens a terminal running "sy approve <host> <id>".
 	// The browser can look and launch, never act: signing stays in
@@ -129,11 +135,123 @@ func localOnly(next http.Handler) http.Handler {
 	})
 }
 
-// hostList merges hub statuses with any extras.
-func (s *Server) hostList() []HostStatus {
-	out := s.Hub.Hosts()
-	if len(out) == 0 && len(s.ExtraHosts) > 0 {
-		return s.ExtraHosts
+// HostMeta is the operator-side config knowledge about a host
+// (hosts.toml): where it is, as whom the agent connects, with which
+// key. Read-only facts for the hosts view.
+type HostMeta struct {
+	Address string `json:"address"`
+	User    string `json:"user"`
+	Key     string `json:"key"` // basename of the configured client key
+}
+
+// HostStats summarizes a host's recent journal activity (fixed one
+// hour window over the ring buffer — a digest, not an audit).
+type HostStats struct {
+	Allow    int      `json:"allow"`
+	Deny     int      `json:"deny"`
+	Request  int      `json:"request"`
+	Approval int      `json:"approval"`
+	Other    int      `json:"other"`
+	Events   int      `json:"events"`
+	Keys     []string `json:"keys"`
+}
+
+// HostView is one row of /api/hosts: connection status merged with
+// config meta and recent activity.
+type HostView struct {
+	HostStatus
+	Address string     `json:"address"`
+	User    string     `json:"user"`
+	Key     string     `json:"key"`
+	Stats   *HostStats `json:"stats,omitempty"`
+}
+
+// hostList merges hub statuses with config meta and per-host
+// activity stats. Hosts with no follower status yet still appear
+// (idle) — a configured host is a fact even before it connects.
+func (s *Server) hostList() []HostView {
+	status := make(map[string]HostStatus, len(s.Hub.hosts))
+	for _, st := range s.Hub.Hosts() {
+		status[st.Name] = st
+	}
+	if len(status) == 0 && len(s.ExtraHosts) > 0 {
+		out := make([]HostView, 0, len(s.ExtraHosts))
+		for _, eh := range s.ExtraHosts {
+			out = append(out, HostView{HostStatus: eh})
+		}
+		return out
+	}
+
+	names := make(map[string]bool, len(status)+len(s.HostMeta))
+	for n := range status {
+		names[n] = true
+	}
+	for n := range s.HostMeta {
+		names[n] = true
+	}
+	stats := s.hostStats(time.Hour)
+
+	out := make([]HostView, 0, len(names))
+	for n := range names {
+		st, ok := status[n]
+		if !ok {
+			st = HostStatus{Name: n, State: "idle"}
+		}
+		v := HostView{HostStatus: st}
+		if m, ok := s.HostMeta[n]; ok {
+			v.Address, v.User, v.Key = m.Address, m.User, m.Key
+		}
+		if st, ok := stats[n]; ok {
+			v.Stats = st
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// hostStats counts decisions and keys per host over the last window,
+// from the hub's ring buffer.
+func (s *Server) hostStats(window time.Duration) map[string]*HostStats {
+	cutoff := time.Now().Add(-window)
+	keysets := make(map[string]map[string]bool)
+	out := make(map[string]*HostStats)
+	for _, ev := range s.Hub.Snapshot(5000) {
+		if ev.at().Before(cutoff) || ev.Host == "" {
+			continue
+		}
+		st, ok := out[ev.Host]
+		if !ok {
+			st = &HostStats{}
+			out[ev.Host] = st
+			keysets[ev.Host] = make(map[string]bool)
+		}
+		st.Events++
+		if ev.Key != "" {
+			keysets[ev.Host][ev.Key] = true
+		}
+		switch ev.Decision {
+		case "allow":
+			st.Allow++
+		case "deny":
+			st.Deny++
+		case "request":
+			st.Request++
+		case "approval":
+			st.Approval++
+		default:
+			st.Other++
+		}
+	}
+	for host, set := range keysets {
+		keys := make([]string, 0, len(set))
+		for k := range set {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if st := out[host]; st != nil {
+			st.Keys = keys
+		}
 	}
 	return out
 }

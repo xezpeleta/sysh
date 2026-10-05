@@ -2,6 +2,7 @@ package control
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -388,6 +389,45 @@ path = "/bin/busybox"`, 1)
 	// previous policy must be untouched (atomic install or nothing)
 	if readFile(t, policyPath) != goodPolicy {
 		t.Fatal("failed install corrupted the previous policy")
+	}
+}
+
+
+
+func TestPolicyShow(t *testing.T) {
+	newTestEnv(t)
+	lintFS.(*fakeFS).
+		addDir("/usr/bin", 0o755, 0).
+		addFile("/usr/bin/uptime", 0o755, 0)
+	setStdin(goodPolicy)
+	if rc := cmdPolicy([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc = %d, want 0", rc)
+	}
+
+	// human form summarizes counts and mode
+	human := captureStdout(t, func() int { return cmdPolicy([]string{"show"}) })
+	if !strings.Contains(human, "mode enforcing") || !strings.Contains(human, "rule(s)") {
+		t.Fatalf("human summary missing basics:\n%s", human)
+	}
+
+	// json form is parseable and carries digest + mtime
+	var info struct {
+		Mode   string `json:"mode"`
+		Rules  int    `json:"rules"`
+		SHA256 string `json:"sha256"`
+		MTime  string `json:"mtime"`
+	}
+	raw := captureStdout(t, func() int { return cmdPolicy([]string{"show", "--json"}) })
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		t.Fatalf("json parse: %v\n%s", err, raw)
+	}
+	if info.Mode != "enforcing" || info.Rules < 1 || len(info.SHA256) != 16 || info.MTime == "" {
+		t.Fatalf("json fields off: %+v", info)
+	}
+
+	// unknown flag is a usage error
+	if rc := cmdPolicy([]string{"show", "--yaml"}); rc != 64 {
+		t.Fatalf("show --yaml rc = %d, want 64", rc)
 	}
 }
 

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"path/filepath"
 	"fmt"
 	"log"
 	"net"
@@ -83,12 +84,18 @@ func cmdWatch(args []string) int {
 
 	// One follower per host: config name → ssh address (port defaulted).
 	hostAddrs := make(map[string]string, len(hf.Hosts))
+	hostMeta := make(map[string]watch.HostMeta, len(hf.Hosts))
 	for name, hc := range hf.Hosts {
 		addr := hc.Address
 		if _, _, err := net.SplitHostPort(addr); err != nil {
 			addr = net.JoinHostPort(addr, "22")
 		}
 		hostAddrs[name] = addr
+		hostMeta[name] = watch.HostMeta{
+			Address: addr,
+			User:    hc.User,
+			Key:     filepath.Base(hc.Key),
+		}
 		f := watch.NewFollower(name, addr, "-"+since, hub, logger)
 		f.Agents = agents
 		go f.Follow()
@@ -110,11 +117,25 @@ func cmdWatch(args []string) int {
 	}
 	go poller.Run()
 
+	// Policy summaries for the hosts view: read-only `sysh policy
+	// show --json` over the same root channel, every couple of
+	// minutes. Hosts on older sysh answer with an error and the
+	// view simply omits the block.
+	info := &watch.HostInfoPoller{
+		Addrs:     hostAddrs,
+		Every:     2 * time.Minute,
+		Put:       hub.SetHostPolicy,
+		HostState: poller.HostState,
+		Log:       logger,
+	}
+	go info.Run()
+
 	srv := &watch.Server{
 		Hub:         hub,
 		Pending:     poller.Snapshot,
 		Agents:      agents,
 		Hosts:       hostAddrs,
+		HostMeta:    hostMeta,
 		LaunchApprove: watch.RealLaunchApprove,
 		Ceremonies:  watch.NewCeremonyStore(),
 		SkipChallenge: noChallenge,

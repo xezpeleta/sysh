@@ -9,12 +9,17 @@ import (
 
 // HostStatus is one followed host's connection state.
 type HostStatus struct {
-	Name       string     `json:"name"`
-	State      string     `json:"state"` // "following" | "reconnecting" | "idle"
-	LastEvent  time.Time  `json:"last_event"`
-	LastError  string     `json:"last_error"`
-	Since      time.Time  `json:"since"` // when the follower (re)connected
-	EventsSeen int64      `json:"events_seen"`
+	Name       string       `json:"name"`
+	State      string       `json:"state"` // "following" | "reconnecting" | "idle"
+	LastEvent  time.Time    `json:"last_event"`
+	LastError  string       `json:"last_error"`
+	Since      time.Time    `json:"since"` // when the follower (re)connected
+	EventsSeen int64        `json:"events_seen"`
+
+	// Policy is the last `sysh policy show` answer (hostinfo.go),
+	// nil when the host has not answered yet (or runs an older sysh
+	// without the subcommand).
+	Policy *HostPolicy `json:"policy,omitempty"`
 }
 
 // Hub is safe for concurrent use.
@@ -110,6 +115,18 @@ func (h *Hub) SetHost(name, state, lastErr string) {
 	if state == "following" {
 		st.Since = time.Now()
 	}
+}
+
+// SetHostPolicy upserts a host's policy summary (hostinfo.go).
+func (h *Hub) SetHostPolicy(name string, p *HostPolicy) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st, ok := h.hosts[name]
+	if !ok {
+		st = &HostStatus{Name: name}
+		h.hosts[name] = st
+	}
+	st.Policy = p
 }
 
 // Hosts returns the status list.

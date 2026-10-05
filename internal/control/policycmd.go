@@ -1,10 +1,15 @@
 package control
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"time"
 	"path/filepath"
 	"strings"
 
@@ -15,13 +20,19 @@ import (
 // cmdPolicy implements `sysh policy install|lint` (§7).
 func cmdPolicy(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: sysh policy install [file] | sysh policy lint [file]")
+		fmt.Fprintln(os.Stderr, "usage: sysh policy install [file] | sysh policy lint [file] | sysh policy show [--json]")
 		return 64
 	}
 	sub, rest := args[0], args[1:]
 	if len(rest) > 1 {
 		fmt.Fprintln(os.Stderr, "usage: sysh policy install [file]")
 		return 64
+	}
+
+	// show reads the INSTALLED policy file, not stdin — it must not
+	// require input (or even a parseable stdin) to answer.
+	if sub == "show" {
+		return cmdPolicyShow(rest)
 	}
 
 	var data []byte
@@ -324,3 +335,86 @@ var (
 	sudoTimeoutTagFn             = sudoTimeoutTag
 	visudoCheckFn                = visudoCheck
 )
+
+// cmdPolicyShow prints a summary of the INSTALLED policy: what is
+// enforced on this host right now. Read-only — parse, count, digest;
+// it changes nothing. `--json` is machine-readable (sy watch's hosts
+// view reads it over the operator's root channel, same transport as
+// the journal tail).
+func cmdPolicyShow(args []string) int {
+	jsonOut := false
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "sysh policy show: unknown flag %q (only --json)\n", a)
+		return 64
+	}
+
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sysh policy show: %v\n", err)
+		return 1
+	}
+	p, perr := policy.Parse(data)
+	if perr != nil {
+		fmt.Fprintf(os.Stderr, "sysh policy show: %v\n", perr)
+		return 1
+	}
+
+	mode := p.Mode
+	if mode == "" {
+		mode = policy.ModeEnforcing
+	}
+	var deny, approval, priv int
+	for i := range p.Rules {
+		switch {
+		case p.Rules[i].Deny:
+			deny++
+		case p.Rules[i].Approval:
+			approval++
+		case p.Rules[i].Privileged:
+			priv++
+		}
+	}
+	allow := len(p.Rules) - deny - approval - priv
+
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])[:16]
+	mtime := ""
+	if fi, err := os.Stat(policyPath); err == nil {
+		mtime = fi.ModTime().UTC().Format(time.RFC3339)
+	}
+
+	scripts := p.AgentScriptsMode
+	if scripts == "" {
+		scripts = policy.AgentModeLines
+	}
+
+	if jsonOut {
+		out := struct {
+			Mode              string `json:"mode"`
+			Rules             int    `json:"rules"`
+			Allow             int    `json:"allow"`
+			Deny              int    `json:"deny"`
+			Approval          int    `json:"approval"`
+			Privileged        int    `json:"privileged"`
+			AgentScripts      string `json:"agent_scripts"`
+			AgentScriptsMode  string `json:"agent_scripts_mode"`
+			SHA256            string `json:"sha256"`
+			MTime             string `json:"mtime"`
+		}{mode, len(p.Rules), allow, deny, approval, priv, p.AgentScripts, scripts, digest, mtime}
+		b, _ := json.Marshal(out)
+		fmt.Println(string(b))
+		return 0
+	}
+
+	fmt.Printf("mode %s · %d rule(s): %d allow, %d deny, %d approval · %d standing root grant(s)\n",
+		mode, len(p.Rules), allow, deny, approval, priv)
+	if p.AgentScripts != "" {
+		fmt.Printf("agent scripts: %s (%s)\n", scripts, p.AgentScripts)
+	}
+	fmt.Printf("policy %s · modified %s\n", digest, mtime)
+	return 0
+}

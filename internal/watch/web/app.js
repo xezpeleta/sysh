@@ -114,13 +114,75 @@ function appendEvent(ev) {
   updateStats();
 }
 
+// ---------- tabs ----------
+// Two views over the same truth: the activity wall and the hosts.
+// The choice is cosmetic and remembered per browser.
+function setView(v) {
+  document.body.classList.toggle("hosts-view", v === "hosts");
+  for (const t of document.querySelectorAll(".tab")) {
+    t.classList.toggle("active", t.dataset.view === v);
+  }
+  localStorage.setItem("sywatch-view", v);
+}
+for (const t of document.querySelectorAll(".tab")) {
+  t.addEventListener("click", () => setView(t.dataset.view));
+}
+setView(localStorage.getItem("sywatch-view") || "activity");
+
 // ---------- hosts ----------
+function fmtAgo(ts) {
+  if (!ts || ts.startsWith("0001-")) return "never";
+  const sec = Math.max(0, (Date.now() - Date.parse(ts)) / 1000);
+  if (sec < 60) return Math.round(sec) + "s ago";
+  if (sec < 3600) return Math.round(sec / 60) + " min ago";
+  if (sec < 86400) return Math.round(sec / 3600) + " h ago";
+  return Math.round(sec / 86400) + " d ago";
+}
+
 function renderHosts() {
-  const bar = $("hostbar");
-  if (!hosts.length) { bar.innerHTML = '<span class="pill idle">no hosts</span>'; return; }
-  bar.innerHTML = hosts.map((h) =>
-    `<span class="pill ${esc(h.state)}" title="${esc(h.last_error || "")}">${esc(h.name)}</span>`).join("");
+  // the activity toolbar's host filter needs the names regardless
+  // of which view is showing
   syncOptions("hostfilter", hosts.map((h) => h.name));
+
+  const grid = $("hostgrid");
+  if (!hosts.length) {
+    grid.innerHTML = '<div class="hostcard empty-card">no hosts configured — hosts.toml is empty</div>';
+    return;
+  }
+  grid.innerHTML = hosts.map((h) => {
+    const st = h.stats;
+    const hour = st
+      ? `${st.allow} allow · ${st.deny} deny · ${st.request} request · ${st.approval} approval` +
+        (st.other ? ` · ${st.other} other` : "")
+      : "no events in the last hour";
+    const keys = st && st.keys && st.keys.length ? st.keys.join(", ") : "—";
+    const pol = h.policy;
+    const policyBlock = pol
+      ? `<div class="hc-row"><span>policy</span><b>${esc(pol.mode)} · ${pol.rules} rules` +
+        ` (${pol.allow} allow · ${pol.deny} deny · ${pol.approval} approval)</b></div>` +
+        (pol.privileged ? `<div class="hc-row"><span>root grants</span><b>${pol.privileged} standing sudoers</b></div>` : "") +
+        (pol.agent_scripts ? `<div class="hc-row"><span>agent scripts</span><b>${esc(pol.agent_scripts_mode)} (${esc(pol.agent_scripts)})</b></div>` : "") +
+        `<div class="hc-row"><span>policy digest</span><b title="sha256 (16 hex) of /etc/sysh/policy.toml">${esc(pol.sha256)}</b></div>`
+      : `<div class="hc-row"><span>policy</span><b class="hc-muted">no answer yet (down, or sysh < 0.6.2)</b></div>`;
+    const err = h.last_error
+      ? `<div class="hc-error" title="${esc(h.last_error)}">${esc(h.last_error)}</div>` : "";
+    return `<div class="hostcard" data-host="${esc(h.name)}">
+      <div class="hc-top">
+        <span class="hc-name">${esc(h.name)}</span>
+        <span class="pill ${esc(h.state)}">${esc(h.state || "idle")}</span>
+      </div>
+      <div class="hc-addr">${esc(h.user || "sy")}@${esc(h.address)}${h.key ? ` · key ${esc(h.key)}` : ""}</div>
+      <div class="hc-rows">
+        <div class="hc-row"><span>last activity</span><b>${fmtAgo(h.last_event)}</b></div>
+        <div class="hc-row"><span>events seen</span><b>${h.events_seen || 0}</b></div>
+        <div class="hc-row"><span>following since</span><b>${fmtAgo(h.since)}</b></div>
+        ${policyBlock}
+        <div class="hc-row"><span>last hour</span><b>${esc(hour)}</b></div>
+        <div class="hc-row"><span>keys</span><b>${esc(keys)}</b></div>
+      </div>
+      ${err}
+    </div>`;
+  }).join("");
 }
 
 // ---------- pending approvals ----------
