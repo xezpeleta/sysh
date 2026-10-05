@@ -34,19 +34,6 @@ a:hover { text-decoration: underline; }
 em { font-style: italic; }
 strong { color: var(--text); font-weight: 600; }
 
-/* ---------- announcement ---------- */
-.announce {
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 0.55rem 1rem;
-  border-bottom: 1px solid var(--border);
-  color: var(--muted);
-}
-.announce a { color: var(--accent-deep); font-weight: 600; }
-.announce .dot { color: var(--accent); margin-right: 0.5em; }
-
 /* ---------- logo: $ySH — the dollar is the cap S with a spine, waiting caret ---------- */
 .logo {
   display: inline-block;
