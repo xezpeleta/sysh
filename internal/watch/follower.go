@@ -63,6 +63,10 @@ type Follower struct {
 	ScanLine func(host, line string) (Event, error) // seam; normally parseEventLine
 	Log      *log.Logger
 
+	// Agents folds every parsed event into the per-request agent
+	// tracker (agents.go). Nil = tracking off.
+	Agents *Agents
+
 	stopOnce sync.Once
 	stopCh   chan struct{}
 }
@@ -152,6 +156,7 @@ func (f *Follower) pump(r io.Reader) error {
 			continue
 		}
 		f.Hub.Add(ev)
+		f.Agents.Observe(ev) // nil-safe
 	}
 	return sc.Err()
 }

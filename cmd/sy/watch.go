@@ -79,6 +79,7 @@ func cmdWatch(args []string) int {
 	logger := log.New(os.Stderr, "sy watch: ", log.LstdFlags)
 
 	hub := watch.NewHub(5000)
+	agents := watch.NewAgents()
 
 	// One follower per host: config name → ssh address (port defaulted).
 	hostAddrs := make(map[string]string, len(hf.Hosts))
@@ -89,6 +90,7 @@ func cmdWatch(args []string) int {
 		}
 		hostAddrs[name] = addr
 		f := watch.NewFollower(name, addr, "-"+since, hub, logger)
+		f.Agents = agents
 		go f.Follow()
 	}
 
@@ -103,6 +105,7 @@ func cmdWatch(args []string) int {
 	srv := &watch.Server{
 		Hub:         hub,
 		Pending:     poller.Snapshot,
+		Agents:      agents,
 		Hosts:       hostAddrs,
 		LaunchApprove: watch.RealLaunchApprove,
 		Ceremonies:  watch.NewCeremonyStore(),

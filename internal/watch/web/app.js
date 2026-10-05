@@ -8,6 +8,7 @@ const $ = (id) => document.getElementById(id);
 let events = [];          // all events received, newest last
 let hosts = [];           // last /api/hosts
 let pending = [];         // last /api/pending
+let agents = [];          // last /api/agents (per-request agent state)
 let seenSeq = 0;
 let filters = {
   search: "",
@@ -138,6 +139,8 @@ function renderPending() {
       <span class="pid">${esc(p.host)} · ${esc(p.id)}</span>
       <span class="pargv">${esc((p.argv || []).join(" "))}</span>
       <span class="pmeta">key=${esc(p.key)} · age ${fmtAge(p.age_sec)}</span>
+      ${agentLine(p.agent)}
+      <span class="pcount" data-deadline="${Date.now() + (p.remaining_sec ?? 0) * 1000}"></span>
       <button class="runbtn herebtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}">✓ approve here</button>
       <button class="runbtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}">▸ run in terminal</button>
       <button class="copybtn" data-cmd="sy approve ${esc(p.host)} ${esc(p.id)}">copy</button>
@@ -150,6 +153,61 @@ function renderPending() {
     live.map(row).join("") +
     (expired.length ? `<div class="pexpired">${expired.length} expired request${expired.length > 1 ? "s" : ""} hidden — refuse-by-default; the agent can re-file</div>` : "");
 }
+
+// agentLine renders what the filing agent is doing while the
+// operator decides — the two live questions: is it waiting for me?
+// did it get the answer?
+function agentLine(a) {
+  if (!a) return "";
+  let txt;
+  switch (a.state) {
+    case "waiting":  txt = `agent waiting · ${a.polls} poll${a.polls === 1 ? "" : "s"} · last check ${fmtAge(a.ago_sec)} ago`; break;
+    case "approved": txt = `approved · waiting for the agent to pick it up`; break;
+    case "fetched":  txt = `agent got the answer`; break;
+    case "expired":  txt = `agent was told: expired — it can re-file`; break;
+    case "filed":    txt = `agent filed · not polling yet`; break;
+    default:         txt = `agent state: ${esc(a.state)}`;
+  }
+  return `<span class="pagent${a.state === "fetched" ? " ok" : ""}">${esc(txt)}</span>`;
+}
+
+// renderAgents lists recent requests that already left the waiting
+// panel (fetched, or told-expired): the operator sees the aftermath,
+// not just the queue.
+function renderAgents() {
+  const el = $("agentlog");
+  if (!el) return;
+  const ids = new Set(pending.map((p) => p.host + "/" + p.id));
+  const done = agents.filter((a) => !ids.has(a.host + "/" + a.id) &&
+    (a.state === "fetched" || a.state === "expired" || a.state === "approved"));
+  if (!done.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = done.slice(0, 8).map((a) => {
+    const mark = a.state === "fetched" ? "✓" : a.state === "expired" ? "✗" : "…";
+    const tail = a.state === "fetched"
+      ? `agent got the answer${a.exit != null ? ` (exit ${a.exit})` : ""} · ${fmtAge(a.filed_ago_sec)} after filing`
+      : a.state === "expired"
+        ? `agent was told: expired · can re-file`
+        : `approved · agent has not picked it up · ${fmtAge(a.approved_ago_sec)} ago`;
+    return `<div class="agentlog-row"><span class="amark ${a.state}">${mark}</span>${esc(a.host)} · ${esc((a.argv || []).join(" "))} · <span class="ameta">${esc(tail)}</span></div>`;
+  }).join("");
+}
+
+// countdown ticks: one interval drives every row's clock between
+// polls. At zero the row leaves immediately — the request is
+// refuse-by-default and the poller (5s) will confirm the same thing.
+setInterval(() => {
+  document.querySelectorAll(".pcount").forEach((el) => {
+    const left = Math.max(0, Math.round((+el.dataset.deadline - Date.now()) / 1000));
+    el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    el.classList.toggle("soon", left <= 120 && left > 60);
+    el.classList.toggle("critical", left <= 60);
+    if (left <= 0) {
+      const row = el.closest(".pending-row");
+      if (row) row.style.display = "none";
+    }
+  });
+}, 1000);
 
 document.addEventListener("click", async (e) => {
   const here = e.target.closest(".herebtn");
@@ -343,7 +401,11 @@ async function pollHosts() {
 }
 async function pollPending() {
   try {
-    const r = await fetch("/api/pending");
+    const [r, ra] = await Promise.all([
+      fetch("/api/pending"),
+      fetch("/api/agents").catch(() => null),
+    ]);
+    if (ra && ra.ok) agents = await ra.json();
     const list = await r.json();
     // backstop for a missed SSE event: a request id that was not
     // there on the previous poll alerts too (never on the first
@@ -361,6 +423,7 @@ async function pollPending() {
     firstPendingPoll = false;
     pending = list;
     renderPending();
+    renderAgents();
   } catch {}
 }
 
@@ -421,13 +484,21 @@ function openCeremony(host, id) {
     })
     .then((info) => {
       ceremonyCtx = { host, id, token: info.token, challenge: !!info.challenge };
-      $("c-argv").textContent = (info.argv || []).join(" ");
+      // The argv shown is the argv signed; the element the operator
+      // must type is its last one. Highlight it — the proof is
+      // reading the argv, never guessing what to type.
+      const argv = info.argv || [];
+      const last = argv.length ? argv[argv.length - 1] : "";
+      const head = argv.slice(0, -1).join(" ");
+      $("c-argv").innerHTML =
+        (head ? esc(head) + " " : "") +
+        (last ? `<span class="argv-last">${esc(last)}</span>` : "");
       $("c-meta").textContent = `${info.host} · ${info.id} · key ${info.key} · age ${fmtAge(info.age)}`;
       if (info.challenge) {
         $("c-note").hidden = false;
-        $("c-note").textContent = "Type the last argument to show you read it:";
+        $("c-note").innerHTML = `type the <span class="type-chip">highlighted argument</span> to show you read it and agree`;
         $("c-typed").hidden = false;
-        state.textContent = `type “${info.type}” to confirm you read the argv`;
+        state.textContent = "";
         $("c-typed").focus();
       } else {
         // --no-challenge: the touch is the confirmation
@@ -470,9 +541,15 @@ function confirmCeremony() {
       setTimeout(() => { ceremony.hidden = true; pollPending(); }, 2500);
     })
     .catch((e) => {
+      // A mistyped challenge consumes the ceremony (one-shot by
+      // design), so the form is dead: re-enable nothing. Show the
+      // miss, then fetch a fresh ceremony for the same request — the
+      // operator reads the argv again and types; the retry loop is
+      // the feedback.
       state.textContent = `✗ ${e.message}`;
-      $("c-typed").value = "";
-      $("c-typed").disabled = false;
+      const host = ceremonyCtx.host, id = ceremonyCtx.id;
+      ceremonyCtx = null;
+      setTimeout(() => openCeremony(host, id), 1500);
     });
 }
 

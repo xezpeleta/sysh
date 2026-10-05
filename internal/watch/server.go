@@ -48,6 +48,11 @@ type Server struct {
 	FetchRequest FetchRequestFunc
 	SignSubmit   func(host, id string, body []byte) (string, error)
 
+	// Agents correlates journal events per request id: is the filing
+	// agent waiting, told-expired, or already answered? Nil = the
+	// pending rows carry no agent line and /api/answers 404.
+	Agents *Agents
+
 	// SkipChallenge disables the typed-argument challenge (operator
 	// opt-out via `sy watch --no-challenge`). The token touch remains
 	// the wall against the agent; what is lost is the forced reading
@@ -59,25 +64,26 @@ type Server struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		body, _ := webFS.ReadFile("web/index.html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(body)
-	})
-	mux.HandleFunc("GET /style.css", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := webFS.ReadFile("web/style.css")
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		_, _ = w.Write(body)
-	})
-	mux.HandleFunc("GET /app.js", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := webFS.ReadFile("web/app.js")
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		_, _ = w.Write(body)
-	})
+	// Static assets carry no validators and change between builds:
+	// without Cache-Control the browser heuristic-caches them and an
+	// operator staring at a stale UI after an upgrade is a support
+	// case (live: an unbriefed-test operator did). The page is tiny;
+	// always refetch.
+	asset := func(name, ctype string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := webFS.ReadFile(name)
+			w.Header().Set("Content-Type", ctype)
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(body)
+		})
+	}
+	// {$} matches the exact root; a bare "GET /" would swallow every
+	// GET route that does not exist (the method-scoped API handlers
+	// registered above would answer, but anything else would get
+	// index.html with a 200).
+	mux.Handle("GET /{$}", asset("web/index.html", "text/html; charset=utf-8"))
+	mux.Handle("GET /style.css", asset("web/style.css", "text/css; charset=utf-8"))
+	mux.Handle("GET /app.js", asset("web/app.js", "text/javascript; charset=utf-8"))
 
 	mux.HandleFunc("GET /api/events", s.sseEvents)
 	mux.HandleFunc("GET /api/hosts", func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +98,15 @@ func (s *Server) Handler() http.Handler {
 		if s.Pending != nil {
 			rows = s.Pending()
 		}
+		s.Agents.augment(rows) // nil-safe
 		writeJSON(w, rows)
+	})
+	mux.HandleFunc("GET /api/agents", func(w http.ResponseWriter, r *http.Request) {
+		if s.Agents == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, s.Agents.Recent(50))
 	})
 
 	return localOnly(mux)

@@ -144,6 +144,36 @@ body {
 .pending-row .pid { color: var(--amber); }
 .pending-row .pargv { color: var(--text); }
 .pending-row .pmeta { color: var(--secondary); font-size: 11.5px; }
+.pcount {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.pcount.soon { color: var(--amber); font-weight: 700; }
+.pcount.critical { color: var(--red); font-weight: 700; }
+.pagent {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--secondary);
+}
+.pagent.ok { color: var(--green); font-weight: 700; }
+#agentlog {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.agentlog-row {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--secondary);
+  padding: 2px 0;
+}
+.agentlog-row .amark { font-weight: 700; margin-right: 6px; }
+.agentlog-row .amark.fetched { color: var(--green); }
+.agentlog-row .amark.expired { color: var(--red); }
+.agentlog-row .amark.approved { color: var(--amber); }
+.agentlog-row .ameta { color: var(--muted); }
 .pexpired {
   padding: 4px 10px;
   color: #888;
@@ -345,6 +375,24 @@ tr.new td { animation: arrive 1.6s ease; }
   font-size: 11.5px;
   color: var(--secondary);
   margin-bottom: 6px;
+}
+.ceremony-argv .argv-last {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-weight: 700;
+}
+.type-chip {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: pre;
 }
 .ceremony-argv {
   font-family: var(--mono);

@@ -120,6 +120,12 @@ func realFetchRequest(host, addr, id string) (*CeremonyInfo, error) {
 	var found *Pending
 	for i := range pend {
 		if pend[i].ID == id {
+			// An expired request cannot be approved; the ceremony
+			// would sign bytes the host will refuse. Fail here, where
+			// the modal can say it, instead of at the touch.
+			if pend[i].Expired {
+				return nil, fmt.Errorf("request %s has expired (refuse-by-default) — the agent can re-file", id)
+			}
 			found = &pend[i]
 			break
 		}

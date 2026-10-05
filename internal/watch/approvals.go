@@ -10,16 +10,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xezpeleta/sysh/internal/approval"
 )
 
 // Pending is one request waiting for an operator, per `sysh approvals`.
 type Pending struct {
-	Host    string   `json:"host"`
-	ID      string   `json:"id"`
-	Argv    []string `json:"argv"`
-	Key     string   `json:"key"`
-	AgeSec  int      `json:"age_sec"`
-	Expired bool     `json:"expired"`
+	Host         string   `json:"host"`
+	ID           string   `json:"id"`
+	Argv         []string `json:"argv"`
+	Key          string   `json:"key"`
+	AgeSec       int      `json:"age_sec"`
+	Expired      bool     `json:"expired"`
+	RemainingSec int      `json:"remaining_sec"` // TTL left, clamped at 0: the panel counts down to it
+	Agent        *AgentInfo `json:"agent,omitempty"` // what the filing agent is doing (agents.go)
 }
 
 // fetchOneFunc lists one host's pending requests. Seam for tests; the
@@ -53,9 +57,14 @@ func parseApprovals(host string, body []byte) ([]Pending, error) {
 	if err := json.Unmarshal([]byte(s), &rows); err != nil {
 		return nil, fmt.Errorf("approvals: %v", err)
 	}
+	ttl := int(approval.RequestTTL.Seconds())
 	out := make([]Pending, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Pending{Host: host, ID: r.ID, Argv: r.Argv, Key: r.Key, AgeSec: r.AgeSec, Expired: r.Expired})
+		left := ttl - r.AgeSec
+		if left < 0 {
+			left = 0
+		}
+		out = append(out, Pending{Host: host, ID: r.ID, Argv: r.Argv, Key: r.Key, AgeSec: r.AgeSec, Expired: r.Expired, RemainingSec: left})
 	}
 	return out, nil
 }
