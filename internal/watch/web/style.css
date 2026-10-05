@@ -339,7 +339,8 @@ tr.new td { animation: arrive 1.6s ease; }
 }
 .b-allow   { color: var(--green); border-color: var(--green); background: var(--green-bg); }
 .b-deny    { color: var(--red);   border-color: var(--red);   background: var(--red-bg); }
-.b-request { color: var(--amber); border-color: var(--amber); background: var(--amber-bg); animation: pulse 1.5s ease 4; }
+.b-request { color: var(--amber); border-color: var(--amber); background: var(--amber-bg); }
+tr.new .b-request { animation: pulse 1.5s ease 4; }
 .b-approve { color: var(--green); border-color: var(--green); background: var(--green-bg); }
 .b-reject  { color: var(--red);   border-color: var(--red);   background: var(--red-bg); }
 .b-result  { color: var(--blue);  border-color: var(--blue);  background: var(--blue-bg); }
@@ -368,7 +369,7 @@ tr.new td { animation: arrive 1.6s ease; }
 .foot code { color: var(--secondary); }
 
 @media (prefers-reduced-motion: reduce) {
-  .pill.reconnecting, .b-request, tr.new td { animation: none; }
+  .pill.reconnecting, tr.new .b-request, tr.new td { animation: none; }
 }
 
 /* ceremony launch: click opens a terminal that runs sy approve; the

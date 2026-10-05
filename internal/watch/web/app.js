@@ -98,14 +98,16 @@ function rebuildRows() {
   updateStats();
 }
 
-function appendEvent(ev) {
+function appendEvent(ev, live) {
   if (ev.seq <= seenSeq) return;
   seenSeq = ev.seq;
   events.push(ev);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
   if (!passesFilters(ev)) { updateStats(); return; }
   const tbody = $("rows");
-  tbody.appendChild(renderRow(ev, true));
+  // Only a live arrival is "new": the SSE replay after (re)connecting
+  // is history — its request badges must not pulse again
+  tbody.appendChild(renderRow(ev, live === true));
   $("empty").style.display = "none";
   if ($("autoscroll").checked) {
     const wrap = $("tablewrap");
@@ -493,7 +495,10 @@ function connect() {
   es.onmessage = (m) => {
     try {
       const ev = JSON.parse(m.data);
-      appendEvent(ev);
+      // the first burst after (re)connecting is replayed history, not
+      // a live arrival — render it quiet
+      const live = Date.now() >= sseGraceUntil;
+      appendEvent(ev, live);
       maybeAlertFromEvent(ev);
       // a ceremony event changed the pending snapshot server-side
       // (the follower wakes the poller); pull it now instead of
