@@ -29,6 +29,7 @@
 package gateway
 
 import (
+	"github.com/xezpeleta/sysh/internal/policy"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -412,9 +413,18 @@ func (t *tracer) syscallStop(pid int) {
 			_ = t.s.emit(evd)
 			// Teaching parity: the interpreter only says "Permission
 			// denied"; sysh says why, in-band, on the run's stderr.
+			// A refused shell or interpreter is almost always the
+			// #!/usr/bin/env habit: name the interpreter in the
+			// shebang instead (#!/bin/bash) — the kernel loads it
+			// before the tracer ever stops, by construction.
+			msg := fmt.Sprintf("traced exec refused: %s — %s", strings.Join(p.argv, " "), p.detail)
+			if len(p.argv) > 0 {
+				if hit := policy.CheckDenylist(p.argv[0], p.argv[0], p.argv); hit != nil && !hit.Warn {
+					msg += "; interpreters are named in the script's shebang (#!/bin/bash), not exec'd as commands"
+				}
+			}
 			result.Write(t.s.cfg.Stderr, result.ClassDenied,
-				fmt.Sprintf("traced exec refused: %s — %s", strings.Join(p.argv, " "), p.detail),
-				t.s.ident.KeyID, result.ExitDenied)
+				msg, t.s.ident.KeyID, result.ExitDenied)
 			// Fail the syscall: an invalid number at entry means the
 			// kernel executes nothing; the exit stop turns -ENOSYS
 			// into -EPERM so the interpreter reports the true cause.

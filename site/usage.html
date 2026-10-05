@@ -207,13 +207,13 @@ integration is deliberately boring — stock OpenSSH, no drivers, no
 proprietary daemon:</p>
 <pre><code><span class="p">$</span> ssh-keygen -t ed25519-sk -f ~/.config/sy/keys/approver-sk -N ""
 <span class="out">You will need to enter the token PIN, then touch the token…
-Your identification has been saved in .approver-sk</span></pre>
+Your identification has been saved in .approver-sk</span></code></pre>
 <p>What lives on disk is only a <em>key handle</em> — a reference to a
 key sealed inside the token&rsquo;s secure element. Register it once,
 root-side, like any approver:</p>
 <pre><code>root@server# sysh approver add ops-yubi
 <span class="out">paste one public key line, then Ctrl-D
-registered approver ops-yubi (sk-ssh-ed25519@openssh.com)</span></pre>
+registered approver ops-yubi (sk-ssh-ed25519@openssh.com)</span></code></pre>
 <p>From then on, the token participates exactly twice per approval:
 <code>ssh-keygen</code> asks the FIDO2 PIN (three bad tries lock the
 token&rsquo;s sysh use until replug; eight wipe it — brute force is not
@@ -225,7 +225,46 @@ reverts to interactive <code>ssh -t</code> from a root session.</p>
 
 <h2 id="scripts"><span class="step">STEP 6</span>Batch work: agent scripts</h2>
 <p>One exec per command is fine for reading; real work comes in batches.
-A root-owned policy field turns a directory into runnable scripts:</p>
+sysh gives the agent progressively more shell — every step still argv-governed.
+This is the operator&rsquo;s dial:</p>
+
+<table class="spectrum">
+<thead><tr><th></th><th>what the agent sends</th><th>shell features</th><th>policy checks</th><th>journal sees</th><th>a refusal</th></tr></thead>
+<tbody>
+<tr><th>direct exec</th>
+<td><code>ssh sy@host '/usr/bin/uptime'</code></td>
+<td>none — pure argv</td>
+<td>the argv: exact rules, denylist, approval</td>
+<td>pre/post pair per exec</td>
+<td>stderr line + exit 125</td></tr>
+<tr><th>console</th>
+<td>same, line by line in a REPL</td>
+<td>none, plus <code>cd</code> state</td>
+<td>identical to direct exec</td>
+<td>identical, plus builtins</td>
+<td>identical</td></tr>
+<tr><th>lines script</th>
+<td><code>#!/usr/bin/sysh</code> + one command per line</td>
+<td>none — a batch of argvs</td>
+<td>every line, same pipeline</td>
+<td>pre/post per line</td>
+<td>stops the script at that line</td></tr>
+<tr><th>traced script</th>
+<td>any bash/python script, pipes and all</td>
+<td>full interpreter</td>
+<td>every <code>execve</code> in the tree</td>
+<td>pre/post per exec, nested included</td>
+<td><code>-EPERM</code> in-band; the script&rsquo;s logic decides</td></tr>
+<tr><th>root mode</th>
+<td>anything at all</td>
+<td>everything</td>
+<td>denylist only (your deny rules)</td>
+<td>top-level argvs as root — the tree inside is not visible</td>
+<td>only what you denied</td></tr>
+</tbody>
+</table>
+
+<p>Two policy fields pick the script flavor:</p>
 <pre><code>agent_scripts = "/var/lib/sysh/agent-scripts"
 agent_scripts_mode = "lines"   <span class="c"># the default</span></code></pre>
 <p>In <strong>lines mode</strong> a script is data: first line
@@ -252,6 +291,15 @@ deny  argv=["grep" "average"] — bash: /usr/bin/grep: Operation not permitted</
 argv-visible), it is argv enforcement — <strong>not sandboxing</strong> —
 and <code>sudo touch /run/sysh/traced-off</code> refuses every traced run
 instantly. amd64 hosts only.</p>
+<p>Trade-offs, bottom to top: lines mode shows you <em>everything</em> the
+agent runs and offers it no shell at all; traced mode gives it a real
+interpreter — pipes, variables, control flow — while every program it
+invokes is still checked and journaled (interpreter builtins are not
+argv-visible; that is the OS layer&rsquo;s bound, not the argv&rsquo;s);
+root mode is the honest opt-out: total freedom, journal only, host
+disposable. Moving up the table, the agent gets more shell and you see
+less of <em>how</em> it works, never less of <em>what</em> it runs at the
+argv level — except root mode, where you see only the top.</p>
 <p>For humans there is also a small interactive console:
 <code>ssh sy@host</code> with a TTY opens a banner, <code>help</code>, and
 <code>cd</code> navigation state — every line through the same checked,

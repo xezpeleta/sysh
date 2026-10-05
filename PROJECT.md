@@ -589,6 +589,25 @@ you want rollback, snapshot the VM in your hypervisor first — outside
 
 ### 6.10 Agent scripts (one command per line)
 
+The agent workflows form a spectrum of shell compatibility — the
+operator's dial. Every step keeps argv as the unit of trust; what
+grows is what the agent may express, and what shrinks (never below
+the argv level) is operator visibility into the how:
+
+| level | agent sends | shell features | policy checks | journal sees | refusal |
+|---|---|---|---|---|---|
+| direct exec | `ssh sy@host '/usr/bin/uptime'` | none — pure argv | the argv: rules, denylist, approval | pre/post per exec | stderr line, exit 125 |
+| console | same, line by line | none, plus `cd` state | identical | identical, plus builtins | identical |
+| lines script | `#!/usr/bin/sysh`, one command per line | none — a batch of argvs | every line, same pipeline | pre/post per line | aborts at the line |
+| traced script (§6.13) | any bash/python script | full interpreter | every `execve` in the tree | pre/post per exec, nested | `-EPERM` in-band; script's logic decides |
+| root mode | anything | everything | denylist only | top argvs as root; tree inside invisible | only denied argvs |
+
+Moving up: the agent gets more shell, the operator sees less of the
+*how* and never less of the *what* — except root mode, where only the
+top-level argv is recorded. Lines and traced need an agent-script
+directory; traced additionally needs owner-exec files, amd64, and
+bare-name `argv[0]` rules (§6.13).
+
 The agent's batch workflow, kept inside the argv policy. A policy may
 declare an **agent-script directory**:
 
