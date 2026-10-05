@@ -129,7 +129,19 @@ strong { color: var(--text); font-weight: 600; }
   margin: 0 auto 2.2rem;
   font-size: 15px;
 }
-.hero-ctas { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; }
+.hero-points {
+  display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap;
+  margin: 1.6rem 0 0;
+}
+.hero-points span {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  padding: 0.3rem 0.75rem; border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.hero-points span:last-child { color: var(--green); border-color: var(--green); }
+
+.hero-ctas { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; margin-top: 1.2rem; }
 
 .btn {
   display: inline-block;
