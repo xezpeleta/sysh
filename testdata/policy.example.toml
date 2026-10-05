@@ -15,6 +15,10 @@ mode = "enforcing"          # enforcing | permissive (permissive: auditd mandato
 # root-owned and not group/world-writable; files inside may be owned
 # by sy (e.g. a sy-owned drop/ subdirectory for agent uploads).
 # agent_scripts = "/var/lib/sysh/agent-scripts"
+# agent_scripts_mode = "lines"  # or "traced": real scripts (any
+# shebang) run under a ptrace tracer; every execve in the tree is
+# argv-checked and refusals fail the syscall (-EPERM). amd64 only;
+# see PROJECT.md 6.13 for the honest limits.
 
 # --- the canonical allow: read-only service status
 [[rule]]

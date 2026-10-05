@@ -73,6 +73,21 @@ func Lint(p *Policy, fs FS) []Finding {
 			findings = append(findings, Finding{SevInfo, -1,
 				"agent_scripts: every line of every script there is policy-checked and journaled like a direct exec"})
 		}
+		switch m := p.AgentScriptsMode; m {
+		case "", AgentModeLines:
+			// default: nothing to add
+		case AgentModeTraced:
+			findings = append(findings, Finding{SevInfo, -1,
+				"agent_scripts_mode = traced: interpreters (any shebang) run as the unprivileged gateway user under ptrace; " +
+					"every execve in the tree is policy-checked and journaled; what the interpreter reads or writes with builtins " +
+					"is NOT argv-visible; traced children get rlimits instead of a systemd scope"})
+		default:
+			findings = append(findings, Finding{SevError, -1,
+				fmt.Sprintf("agent_scripts_mode must be %q or %q (got %q)", AgentModeLines, AgentModeTraced, m)})
+		}
+	} else if p.AgentScriptsMode != "" {
+		findings = append(findings, Finding{SevWarning, -1,
+			"agent_scripts_mode set without agent_scripts: ignored"})
 	}
 
 	hasPrivileged := false // any privileged rule (standing or approval)

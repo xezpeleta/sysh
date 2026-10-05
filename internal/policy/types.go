@@ -29,8 +29,20 @@ type Policy struct {
 	// gateway; the directory itself must be root-owned and not
 	// group/world-writable — the linter and doctor enforce that.
 	AgentScripts string `toml:"agent_scripts"`
-	Rules        []Rule `toml:"rule"`
+	// AgentScriptsMode selects how scripts in that directory run
+	// (§6.13): "lines" (default, one command per line, every line
+	// policy-checked) or "traced" (a real interpreter under ptrace —
+	// every execve in its process tree is policy-checked at syscall
+	// entry and denied with -EPERM).
+	AgentScriptsMode string `toml:"agent_scripts_mode"`
+	Rules            []Rule `toml:"rule"`
 }
+
+// Agent-script execution modes (§6.13).
+const (
+	AgentModeLines  = "lines"
+	AgentModeTraced = "traced"
+)
 
 // Rule is one allow or deny rule.
 type Rule struct {

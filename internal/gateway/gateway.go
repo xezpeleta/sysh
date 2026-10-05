@@ -263,8 +263,14 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 	// agent-script directory runs as a line script — one command per
 	// line, every line through this same pipeline. The gateway never
 	// execs the file, so the kernel never honors a foreign shebang.
+	// In traced mode (§6.13) the gateway does exec it — any shebang —
+	// under ptrace, and every execve in the tree comes back here as
+	// argv to check, decided while the child is stopped.
 	if pol.AgentScripts != "" {
 		if p, ok := agentScriptPath(pol.AgentScripts, argv[0]); ok {
+			if pol.AgentScriptsMode == policy.AgentModeTraced {
+				return s.runTracedScript(p, argv, baseEvent)
+			}
 			return s.runScriptFile(p, argv, baseEvent)
 		}
 	}

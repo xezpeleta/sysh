@@ -101,6 +101,16 @@ a shell.
   aborts the script; bash/python shebangs are refused with teaching.
   The agent uploads via an acked transfer rule into a drop
   subdirectory it owns — the directory itself stays root-owned.
+- **Traced scripts (optional):** `agent_scripts_mode = "traced"` lets
+  the same directory hold real scripts — any shebang — run under a
+  ptrace tracer that intercepts every `execve` in the tree. Each
+  argv is read from the stopped child, checked by the same rules,
+  and a refusal fails the syscall with `-EPERM` (the interpreter
+  sees "Operation not permitted"; the journal sees everything).
+  rlimits + a run timeout + `PTRACE_O_EXITKILL` contain it; a root
+  kill switch (`touch /run/sysh/traced-off`) turns it off. amd64
+  builds only. Not sandboxing — argv enforcement extended into a
+  tree the operator chose to allow (see PROJECT.md §6.13).
 - **An interactive console:** `ssh sy@host` with a PTY opens an argv
   REPL with its own banner — the MOTD sysh actually controls. One
   command per line, each through the full pipeline; `cd` is navigation

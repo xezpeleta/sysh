@@ -604,6 +604,10 @@ Properties, by construction:
   may own files inside — e.g. a sy-owned `drop/` subdirectory for
   uploads — but never the directory or its path.
 
+Two run modes (§6.13): `agent_scripts_mode = "lines"` (default,
+everything above) or `"traced"` — real scripts with any shebang,
+every execve in the tree argv-checked under a ptrace tracer.
+
 The upload workflow stays agent-driven: the operator acks a
   transfer rule (rsync/scp are warn-class denylist entries,
   acknowledgeable) scoped to the drop subdirectory, and the agent
@@ -690,6 +694,81 @@ command and a task) the channel and watching the sysh journal:
   the file-mode refusal by reading it, run — in about 90 seconds,
   with zero blind probes. Its closing line: "The refusals aren't
   obstacles — they're documentation."
+
+### 6.13 Traced agent scripts (real interpreters, still argv-governed)
+
+`agent_scripts_mode = "traced"` turns the agent-script directory
+from data into real scripts: **any shebang** — bash, python, node,
+whatever the operator allows to be installed — runs as a child of the
+gateway while a **ptrace tracer** intercepts every `execve` in the
+process tree. The argv is read from the stopped child's memory at
+syscall entry, policy-checked by exactly the same `Match` as a
+direct exec, and a refusal **fails the syscall itself** (`-EPERM`):
+the interpreter sees "Operation not permitted", the journal sees
+the full argv pre/post pair, and the script runs on. Nested
+interpreters get no free pass: `/bin/bash -c '...'` inside a script
+is itself an execve, and it needs its own rule or it is refused.
+
+Properties:
+
+- **Same argv semantics**: rules match the exact argv of every exec
+  in the tree. Fixed positions, `rest`, deny rules — identical to a
+  direct exec. Builtins, approval, and privileged rules are
+  direct-exec concepts and do not apply inside a tree.
+- **Refusal is a failed exec, not an abort**: unlike line mode
+  (§6.10, which stops at the offending line), a refused exec looks
+  to the interpreter like `Permission denied`; whether the script
+  continues is the script's own logic. The teaching line still
+  reaches the agent in-band on stderr.
+- **The interpreter's own exec is exempt by construction**: the
+  child `PTRACE_TRACEME`s before the initial exec, so the first stop
+  the tracer sees is *after* the shebang interpreter is already
+  loaded. The script file itself is checked like line mode (§6.10
+  file rules) plus an owner-exec bit and the same 64 KB cap.
+- **Containment without a scope**: the tracer must be the tracee's
+  ancestor, so a systemd scope is impossible. Instead: rlimits
+  (CPU, NPROC=256 mirroring the scope task cap — concurrent traced
+  runs share the gateway uid's budget, which is the intended bound
+  — 1 GB address space, 64 MB file size), a whole-run timeout
+  (600 s default), `PTRACE_O_EXITKILL` (the kernel kills the whole
+  tree if the gateway dies), and a private process group for clean
+  kills.
+- **The kernel suppresses setuid under ptrace** (LSM_UNSAFE_PTRACE):
+  a traced exec never gains privileges the tracer could not already
+  grant, so nothing in the tree can escalate through a setuid
+  binary.
+- **Kill switch**: `sudo touch /run/sysh/traced-off` makes every
+  traced run refuse instantly until the file is removed (scripts
+  still run as line mode if the policy says `lines`).
+- **amd64 only** (build-tagged): the tracer reads registers by
+  syscall number, so each arch needs its own file. Other builds
+  refuse traced mode with a clear message rather than degrading.
+
+**Honest limits, stated in the lint too**:
+
+- Only `execve`/`execveat` are inspected. What the interpreter does
+  with builtins, redirections, and file writes is **not**
+  argv-visible and runs with the unprivileged gateway user's
+  ordinary rights. The operator opts into that by choosing traced
+  mode for a directory they curate and writing rules for exactly
+  what the script may exec; deny-listing path shapes is the file
+  layer's job (fscheck), not argv's.
+- The runtime denylist is deliberately **not** re-applied inside a
+  traced tree: the denylist exists because a shell runs commands
+  "the policy never sees" — under tracing the policy sees every one
+  of them, and the linter still refuses to write rules for denylisted
+  names, so nothing can match them. In permissive mode every execve
+  in the tree is journaled.
+- One tracer thread runs the whole tree (ptrace binds the tracer to
+  the exact thread that forked; the stdlib `SysProcAttr.Ptrace`
+  comment warns about this and the code follows it).
+
+**What this is not**: it is not sandboxing. It is argv enforcement
+extended into a process tree the operator chose to allow — the
+interpreter can still burn CPU until the timeout, still write files
+the `sy` user can write, still read what `sy` can read. Operators
+who want the strictest posture keep the default `lines` mode and
+lose nothing.
 
 ### 8.1 Event model
 

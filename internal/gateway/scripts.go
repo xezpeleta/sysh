@@ -87,6 +87,29 @@ func checkScriptFile(path string) error {
 	return nil
 }
 
+// checkTracedScriptFile adds the traced-mode requirements on top of
+// checkScriptFile: the file must be executable by its owner (the
+// gateway execs it and lets the kernel honor the shebang) and within
+// the size cap (contents are not parsed, but a 64 KB ceiling still
+// applies — a traced script is a curated operator artifact, not a
+// payload drop).
+func checkTracedScriptFile(path string) error {
+	if err := checkScriptFile(path); err != nil {
+		return err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm()&0o100 == 0 {
+		return fmt.Errorf("%s: not executable by owner (mode %04o — chmod u+x; 0700 recommended)", path, fi.Mode().Perm())
+	}
+	if fi.Size() > MaxScriptBytes {
+		return fmt.Errorf("%s: larger than %d bytes", path, MaxScriptBytes)
+	}
+	return nil
+}
+
 // runScriptFile executes a script file line by line. fromPolicy is
 // the argv that named the script (for events); agentDir is true when
 // the script came from the policy's agent-script directory (operator
