@@ -157,13 +157,15 @@ function renderHosts() {
       : "no events in the last hour";
     const keys = st && st.keys && st.keys.length ? st.keys.join(", ") : "—";
     const pol = h.policy;
+    const counts = (n, what) => (n ? `${n} ${what}` : "");
+    const parts = [counts(pol.allow, "allow"), counts(pol.deny, "deny"),
+                   counts(pol.approval, "approval"), counts(pol.privileged, "root grants")]
+      .filter(Boolean).join(" · ") || "no rules";
     const policyBlock = pol
-      ? `<div class="hc-row"><span>policy</span><b>${esc(pol.mode)} · ${pol.rules} rules` +
-        ` (${pol.allow} allow · ${pol.deny} deny · ${pol.approval} approval)</b></div>` +
-        (pol.privileged ? `<div class="hc-row"><span>root grants</span><b>${pol.privileged} standing sudoers</b></div>` : "") +
+      ? `<div class="hc-row"><span>policy</span><b><span class="pmode pm-${esc(pol.mode)}">${esc(pol.mode)}</span> · ${pol.rules} rules · ${esc(parts)}</b></div>` +
         (pol.agent_scripts ? `<div class="hc-row"><span>agent scripts</span><b>${esc(pol.agent_scripts_mode)} (${esc(pol.agent_scripts)})</b></div>` : "") +
-        `<div class="hc-row"><span>policy digest</span><b title="sha256 (16 hex) of /etc/sysh/policy.toml">${esc(pol.sha256)}</b></div>`
-      : `<div class="hc-row"><span>policy</span><b class="hc-muted">no answer yet (down, or sysh < 0.6.2)</b></div>`;
+        `<div class="hc-row"><span>policy digest</span><b class="hc-digest" title="sha256 (16 hex) of /etc/sysh/policy.toml">${esc(pol.sha256)}</b></div>`
+      : `<div class="hc-row"><span>policy</span><b class="hc-muted">unavailable — down, or sysh < 0.6.2</b></div>`;
     const err = h.last_error
       ? `<div class="hc-error" title="${esc(h.last_error)}">${esc(h.last_error)}</div>` : "";
     return `<div class="hostcard" data-host="${esc(h.name)}">
@@ -171,9 +173,10 @@ function renderHosts() {
         <span class="hc-name">${esc(h.name)}</span>
         <span class="pill ${esc(h.state)}">${esc(h.state || "idle")}</span>
       </div>
-      <div class="hc-addr">${esc(h.user || "sy")}@${esc(h.address)}${h.key ? ` · key ${esc(h.key)}` : ""}</div>
+      <div class="hc-addr">${esc(h.user || "sy")}@${esc((h.address || "").replace(/:22$/, ""))}</div>
       <div class="hc-rows">
         <div class="hc-row"><span>last activity</span><b>${fmtAgo(h.last_event)}</b></div>
+        ${h.key ? `<div class="hc-row"><span>agent key</span><b>${esc(h.key)}</b></div>` : ""}
         <div class="hc-row"><span>events seen</span><b>${h.events_seen || 0}</b></div>
         <div class="hc-row"><span>following since</span><b>${fmtAgo(h.since)}</b></div>
         ${policyBlock}
@@ -186,13 +189,23 @@ function renderHosts() {
 }
 
 // ---------- pending approvals ----------
+// An expired request keeps its quiet line for a short grace period
+// (the operator deserves to see what they missed), then the whole
+// panel clears — a banner that lingers for hours over nothing is
+// noise wearing a purpose. Requests carry RequestTTL=10m; anything
+// older than TTL + grace has been dead a long time.
+const EXPIRY_GRACE_SEC = 180;
+
 function renderPending() {
   const panel = $("pending");
   const live = pending.filter((p) => !p.expired);
-  const expired = pending.filter((p) => p.expired);
+  // fresh expiries still teach; stale ones are history (the wall
+  // below has the whole story with timestamps)
+  const expired = pending.filter((p) =>
+    p.expired && p.age_sec != null && (p.age_sec - 600) <= EXPIRY_GRACE_SEC);
   const count = document.getElementById("pendingcount");
   count.textContent = live.length ? `● ${live.length} pending` : "";
-  if (!pending.length) { panel.hidden = true; return; }
+  if (!live.length && !expired.length) { panel.hidden = true; return; }
   panel.hidden = false;
 
   const row = (p) =>
