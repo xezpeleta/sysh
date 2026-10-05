@@ -29,6 +29,30 @@ func shellOperatorArgv(argv []string) bool {
 	return false
 }
 
+// operatorArgWord returns the first argv element that is a shell
+// operator or redirection — the words an unbriefed agent sends when
+// it treats the channel as a shell ("apt-get update 2>&1 | tail -5").
+// Used on the ALLOW path too: in modes where the command runs, the
+// operators become literal arguments and the failure the child
+// reports is confusing and undeserved. One quiet stderr note saves
+// the round-trips.
+func operatorArgWord(argv []string) string {
+	redirs := map[string]bool{
+		"&&": true, "||": true, ";": true, "|": true, "&": true,
+		">": true, ">>": true, "<": true, "2>": true, "1>": true,
+		"2>>": true, "1>>": true, "2>&1": true, "1>&2": true, ">&": true,
+	}
+	for _, a := range argv {
+		if redirs[a] {
+			return a
+		}
+		if strings.Contains(a, "&&") || strings.HasSuffix(a, ";") {
+			return a
+		}
+	}
+	return ""
+}
+
 // absPathHint returns the absolute path a bare argv[0] should be
 // sent as, when some rule names that binary by its full path.
 // "uptime" denied while "/usr/bin/uptime" is rule 0 is a round-trip

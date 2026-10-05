@@ -314,6 +314,17 @@ func (s *session) commandChecked(cmd string) (int, bool) {
 		return code, true
 	}
 
+	// Allowed, but carrying shell-operator words? They are literal
+	// arguments here — the child's own error will read like nonsense
+	// ("The update command takes no arguments"). One stderr note,
+	// before anything runs, is the whole difference between "the
+	// gateway is broken" and "ah, one command per exec" (observed
+	// live: an unbriefed agent burned two execs concluding the former).
+	if w := operatorArgWord(argv); w != "" {
+		fmt.Fprintf(cfg.Stderr,
+			"sysh: note: %q was passed as a literal argument — no shell operators or redirections here: send one command per exec (argv is split on whitespace)\n", w)
+	}
+
 	// Resolve the binary path.
 	path := ""
 	if dec.Rule != nil && dec.Rule.Path != "" {

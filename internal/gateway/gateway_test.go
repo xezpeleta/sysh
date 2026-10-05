@@ -691,3 +691,33 @@ deny = true
 		t.Fatal("root-mode deny must be journaled")
 	}
 }
+
+// Root mode runs everything not denied — including argv polluted
+// with shell words ("apt-get update 2>&1 | tail -5"). The child then
+// fails with its own confusing error (observed live with an
+// unbriefed agent: two burned execs, conclusion "the gateway is
+// weird"). The allow path must carry the same teaching note the
+// deny path has, as a stderr line before anything runs.
+func TestRunOperatorNoteOnAllow(t *testing.T) {
+	doc := `
+version = 2
+mode = "permissive"
+`
+	cfg, _, _, stderr := testConfig(t, doc)
+	code := Run(cfg, "/bin/echo hello 2>&1 | tail -5")
+	if code != 0 {
+		t.Fatalf("exit code %d, stderr: %s", code, stderr.String())
+	}
+	note := stderr.String()
+	if !strings.Contains(note, `sysh: note: "2>&1" was passed as a literal argument`) {
+		t.Fatalf("missing operator note, stderr: %s", note)
+	}
+	// one note, the first offending word — not one per word
+	if strings.Count(note, "sysh: note:") != 1 {
+		t.Fatalf("want exactly one note, stderr: %s", note)
+	}
+	// the command still ran and produced its output line elsewhere
+	if !strings.Contains(note, `"class":"exec"`) {
+		t.Fatalf("no exec result line, stderr: %s", note)
+	}
+}
