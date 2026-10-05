@@ -1,0 +1,92 @@
+# sysh example policy — operational agent with approvals.
+#
+# The agent diagnoses freely and can ACT only through the approval
+# channel: every privileged rule below carries approval = true, so
+# the agent's request waits (exit 30, a req_ id) until a human runs
+# `sysh approve` from a root session on the host. The one exception
+# is systemctl daemon-reload (no live effect — units reload from
+# disk, nothing restarts), kept as a standing grant for contrast.
+# See examples/operational/README.md for the full ceremony.
+
+version = 2
+mode = "enforcing"
+
+# ── observe (compact; see examples/diagnostic for the full set) ───────
+
+[[rule]]
+argv = ["/usr/bin/uptime"]
+path = "/usr/bin/uptime"
+
+[[rule]]
+argv = ["/usr/bin/ps", "aux"]
+path = "/usr/bin/ps"
+
+[[rule]]
+argv = ["/usr/bin/free", "-h"]
+path = "/usr/bin/free"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/df", "-h"]
+path = "/usr/bin/df"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/ss", "-tuln"]
+path = "/usr/bin/ss"
+ack = true
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "status", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "is-active", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+
+# journalctl needs the documented opt-in: `sysh journal-group enable`
+[[rule]]
+argv = ["/usr/bin/journalctl", "-u", "[a-z0-9@._][a-z0-9@._\\-]*", "-n", "[0-9]+"]
+path = "/usr/bin/journalctl"
+
+# ── act: standing root grant (the contrast case) ──────────────────────
+# daemon-reload re-reads unit files from disk; it restarts nothing
+# and disrupts nothing. Every other root verb below needs a human.
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "daemon-reload"]
+path = "/usr/bin/systemctl"
+privileged = true
+ack = true
+timeout = 30
+
+# ── act: the approval channel (privileged + approval) ─────────────────
+# restart is the disruptive verb: it drops connections and, for some
+# units, loses state. The pattern admits any unit name, but the
+# approver must type the unit name by hand before it runs — the
+# pattern-chosen argument is the only attacker-influenced content.
+
+[[rule]]
+argv = ["/usr/bin/systemctl", "restart", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+privileged = true
+approval = true
+timeout = 60
+
+# reload is the graceful verb for units that support it
+[[rule]]
+argv = ["/usr/bin/systemctl", "reload", "[a-z0-9@._][a-z0-9@._\\-]*"]
+path = "/usr/bin/systemctl"
+privileged = true
+approval = true
+timeout = 60
+
+# security-update check: fully literal argv, so the approver answers
+# a plain yes — no pattern-chosen argument to type. Refreshing the
+# package lists writes cache state only; upgrades stay human-only.
+[[rule]]
+argv = ["/usr/bin/apt-get", "update"]
+path = "/usr/bin/apt-get"
+privileged = true
+approval = true
+timeout = 120
