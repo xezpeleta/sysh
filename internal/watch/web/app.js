@@ -538,7 +538,16 @@ function confirmCeremony() {
     })
     .then((res) => {
       state.textContent = `✓ ${res.result.trim().split("\n").pop()}`;
-      setTimeout(() => { ceremony.hidden = true; pollPending(); }, 2500);
+      // The row is answered the moment the ceremony returns: drop it
+      // here, not whenever the next poller cycle gets around to it.
+      // The modal ✓, the wall's approve event, and the empty panel
+      // all land together; the next poll confirms the same truth.
+      const host = ceremonyCtx.host, id = ceremonyCtx.id;
+      pending = pending.filter((p) => !(p.host === host && p.id === id));
+      renderPending();
+      renderAgents();
+      pollPending();
+      setTimeout(() => { ceremony.hidden = true; }, 2500);
     })
     .catch((e) => {
       // A mistyped challenge consumes the ceremony (one-shot by

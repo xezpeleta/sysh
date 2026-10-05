@@ -100,6 +100,14 @@ func cmdWatch(args []string) int {
 	}
 
 	poller := watch.NewApprovalPoller(hostAddrs, watchApprovalsEvery, nil)
+	poller.HostState = func(name string) string {
+		for _, st := range hub.Hosts() {
+			if st.Name == name {
+				return st.State
+			}
+		}
+		return ""
+	}
 	go poller.Run()
 
 	srv := &watch.Server{

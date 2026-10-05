@@ -77,6 +77,13 @@ type ApprovalPoller struct {
 	fetchOne fetchOneFunc
 	every   time.Duration
 
+	// HostState reports a follower's connection state ("following",
+	// "reconnecting", …); nil = poll everything. A host the follower
+	// cannot reach gets skipped instead of stalling the cycle on its
+	// ConnectTimeout — one down host must not delay every other
+	// host's pending panel.
+	HostState func(name string) string
+
 	mu     sync.Mutex
 	latest []Pending
 
@@ -125,6 +132,9 @@ func (p *ApprovalPoller) Run() {
 func (p *ApprovalPoller) poll() {
 	var all []Pending
 	for _, h := range p.hosts {
+		if p.HostState != nil && p.HostState(h.name) == "reconnecting" {
+			continue // down: its rows are stale by definition
+		}
 		rows, err := p.fetchOne(h.name, h.addr)
 		if err != nil {
 			continue
