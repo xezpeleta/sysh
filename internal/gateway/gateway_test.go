@@ -730,13 +730,13 @@ mode = "permissive"
 // number existed.
 func TestScopeUnitNameUniquePerExec(t *testing.T) {
 	start := time.Unix(1791228524, 0)
-	a := scopeUnitName("sy/bookworm", start)
-	b := scopeUnitName("sy/bookworm", start)
-	c := scopeUnitName("sy/bookworm", start)
+	a := scopeUnitName("sy/testhost", start)
+	b := scopeUnitName("sy/testhost", start)
+	c := scopeUnitName("sy/testhost", start)
 	if a == b || b == c || a == c {
 		t.Fatalf("scope unit names collide within one process: %q %q %q", a, b, c)
 	}
-	if !strings.HasPrefix(a, "sysh-sy-bookworm-") {
+	if !strings.HasPrefix(a, "sysh-sy-testhost-") {
 		t.Fatalf("unexpected unit name shape: %q", a)
 	}
 }

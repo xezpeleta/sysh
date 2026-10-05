@@ -158,7 +158,7 @@ function renderHosts() {
     const keys = st && st.keys && st.keys.length ? st.keys.join(", ") : "—";
     const pol = h.policy;
     const counts = (n, what) => (n ? `${n} ${what}` : "");
-    // built only when pol exists — unifi without an answer must not
+    // built only when pol exists — a host without an answer must not
     // kill the whole grid with a null deref
     const parts = !pol ? "" :
       [counts(pol.allow, "allow"), counts(pol.deny, "deny"),
