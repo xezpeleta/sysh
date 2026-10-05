@@ -158,9 +158,12 @@ function renderHosts() {
     const keys = st && st.keys && st.keys.length ? st.keys.join(", ") : "—";
     const pol = h.policy;
     const counts = (n, what) => (n ? `${n} ${what}` : "");
-    const parts = [counts(pol.allow, "allow"), counts(pol.deny, "deny"),
-                   counts(pol.approval, "approval"), counts(pol.privileged, "root grants")]
-      .filter(Boolean).join(" · ") || "no rules";
+    // built only when pol exists — unifi without an answer must not
+    // kill the whole grid with a null deref
+    const parts = !pol ? "" :
+      [counts(pol.allow, "allow"), counts(pol.deny, "deny"),
+       counts(pol.approval, "approval"), counts(pol.privileged, "root grants")]
+        .filter(Boolean).join(" · ") || "no rules";
     const policyBlock = pol
       ? `<div class="hc-row"><span>policy</span><b><span class="pmode pm-${esc(pol.mode)}">${esc(pol.mode)}</span> · ${pol.rules} rules · ${esc(parts)}</b></div>` +
         (pol.agent_scripts ? `<div class="hc-row"><span>agent scripts</span><b>${esc(pol.agent_scripts_mode)} (${esc(pol.agent_scripts)})</b></div>` : "") +
