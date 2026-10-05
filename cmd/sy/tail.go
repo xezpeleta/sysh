@@ -115,7 +115,7 @@ const (
 
 // formatTailLine renders one event:
 //
-//	21:26:03 bookworm sy/bookworm allow /usr/bin/uptime (exit 0, 213ms)
+//	21:26:03 web01 sy/web01 allow /usr/bin/uptime (exit 0, 213ms)
 //
 // privileged execs carry [root]; the decision word is colored by class.
 func formatTailLine(ev watch.Event, color bool) string {

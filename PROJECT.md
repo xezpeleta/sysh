@@ -308,7 +308,7 @@ restricted grammar — literals, alternation, and character classes only
 Go's RE2 (linear time) and anchored `\A…\z`. From the syntax tree the
 linter computes the pattern's first-character set and rejects anything
 that can match a leading `-` (no option injection). Examples:
-`"nginx|unifi"`, `"[a-z0-9@._][a-z0-9@._\\-]*"` (leading class without
+`"nginx|apache"`, `"[a-z0-9@._][a-z0-9@._\\-]*"` (leading class without
 `-`). One exception, learned live: some protocols pass option clusters
 as fixed argv positions by design (`rsync --server` sends its protocol
 flags as one token). A fixed-position pattern that can match a leading
@@ -504,7 +504,7 @@ argv = ["find", "/var/log"]
 deny = true
 
 [[rule]]
-argv = ["systemctl", "restart", "nginx|unifi"]
+argv = ["systemctl", "restart", "nginx|apache"]
 path = "/usr/bin/systemctl"
 privileged = true             # executed as root via the operator's
                               # exact-argv sudo grant (§6.8); ack and an

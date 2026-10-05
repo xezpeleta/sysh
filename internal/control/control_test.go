@@ -196,14 +196,14 @@ func (m *fakeFS) EvalSymlinks(p string) (string, error) {
 // ---- auth ---------------------------------------------------------------
 
 // The canonical authorized_keys line must be comma-separated — this is
-// the bug the unifi e2e caught (space-separated options parse visually
+// the bug a live e2e caught (space-separated options parse visually
 // but the key never binds).
 func TestAuthAddCanonicalLine(t *testing.T) {
 	newTestEnv(t)
 	lintFS.(*fakeFS).
 		addDir("/usr/bin", 0o755, 0)
 
-	line, fp := genKeyLine(t, `restrict,from="10.0.0.0/8"`, "agent/one")
+	line, fp := genKeyLine(t, `restrict,from="192.0.2.0/24"`, "agent/one")
 	setStdin(line)
 
 	if rc := cmdAuth([]string{"add"}); rc != 0 {
@@ -215,7 +215,7 @@ func TestAuthAddCanonicalLine(t *testing.T) {
 	if len(parts) != 3 {
 		t.Fatalf("authorized_keys line = %q, want 3 fields (options, type, base64)", ak)
 	}
-	if parts[0] != `restrict,from="10.0.0.0/8"` {
+	if parts[0] != `restrict,from="192.0.2.0/24"` {
 		t.Fatalf("options field = %q, want comma-separated restrict,from", parts[0])
 	}
 	if !strings.HasPrefix(parts[1], "ssh-ed25519") {
@@ -270,7 +270,7 @@ func TestAuthAddDuplicateFingerprint(t *testing.T) {
 	}
 	// same key, different id and options
 	fields := strings.Fields(line)
-	setStdin("restrict,from=\"10.0.0.0/8\" " + fields[1] + " " + fields[2] + " second")
+	setStdin("restrict,from=\"192.0.2.0/24\" " + fields[1] + " " + fields[2] + " second")
 	if rc := cmdAuth([]string{"add"}); rc != 1 {
 		t.Fatalf("duplicate rc = %d, want 1", rc)
 	}

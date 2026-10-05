@@ -153,7 +153,7 @@ func TestParseApprovals(t *testing.T) {
 }
 
 func TestApprovalPoller(t *testing.T) {
-	p := NewApprovalPoller(map[string]string{"a": "10.0.0.1:22"}, time.Hour, func(host, addr string) ([]Pending, error) {
+	p := NewApprovalPoller(map[string]string{"a": "192.0.2.1:22"}, time.Hour, func(host, addr string) ([]Pending, error) {
 		return []Pending{{Host: host, ID: "req_1", Argv: []string{"/usr/bin/id"}}}, nil
 	})
 	go p.Run()
