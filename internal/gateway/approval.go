@@ -126,9 +126,13 @@ func serveResult(cfg Config, emit func(audit.Event) error, ident Identity, argv 
 
 	res, err := fetchResult(dir, id, cfg.Now())
 	if err != nil {
-		ev.Detail = err.Error()
+		// Say WHICH failure it is. An ambiguous "pending, expired,
+		// or never approved" taught nobody: an agent that knows the
+		// request expired stops waiting and re-files; the operator's
+		// wall reads the same classification from the audit event.
+		detail := classifyNoResult(cfg, id)
+		ev.Detail = detail
 		_ = emit(ev)
-		detail := "no result for " + id + " (pending, expired, or never approved)"
 		result.Write(cfg.Stderr, result.ClassNoResult, detail, ident.KeyID, result.ExitNoResult)
 		return result.ExitNoResult
 	}
@@ -148,6 +152,25 @@ func serveResult(cfg Config, emit func(audit.Event) error, ident Identity, argv 
 		Exit:      intPtr(res.Exit),
 	}.Write(cfg.Stderr)
 	return res.Exit
+}
+
+// classifyNoResult explains why a result is unavailable, by asking
+// the drop box what it knows about the id (read-only; the gateway
+// wrote the request file, so it can stat it). The three cases map to
+// three teachings: keep waiting, re-file, or bad id.
+func classifyNoResult(cfg Config, id string) string {
+	dir := cfg.RequestsDir
+	if dir == "" {
+		dir = approval.RequestsDir
+	}
+	fi, err := os.Lstat(approval.RequestPath(dir, id))
+	if err != nil {
+		return fmt.Sprintf("no result for %s — no live request with this id (swept, or never filed; ids come from approval_required responses)", id)
+	}
+	if cfg.Now().Sub(fi.ModTime()) > approval.RequestTTL {
+		return fmt.Sprintf("request %s expired — no operator answer within %s (refuse-by-default); re-run the command to file a fresh request", id, approval.RequestTTL)
+	}
+	return fmt.Sprintf("no result for %s yet — the request is pending operator approval; wait and re-check", id)
 }
 
 // fetchResult reads one result file, enforcing the TTL by mtime (the

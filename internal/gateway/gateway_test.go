@@ -291,6 +291,54 @@ func TestRunResultNoResult(t *testing.T) {
 	}
 }
 
+func TestRunResultClassification(t *testing.T) {
+	cfg, _, _, stderr := testConfig(t, execPolicy)
+	reqDir := filepath.Join(cfg.HomeDir, "requests")
+	os.MkdirAll(reqDir, 0o755)
+	cfg.RequestsDir = reqDir
+	cfg.ResultsDir = filepath.Join(cfg.HomeDir, "results")
+	id := "req_0123456789ab"
+
+	// missing: no request file, no result file
+	stderr.Reset()
+	code := Run(cfg, "sysh-result "+id)
+	if code != result.ExitNoResult {
+		t.Fatalf("exit %d, want %d", code, result.ExitNoResult)
+	}
+	if !strings.Contains(stderr.String(), "no live request") {
+		t.Fatalf("missing case: %s", stderr.String())
+	}
+
+	// pending: fresh request file in the drop box
+	req := approval.Request{ID: id, Argv: []string{"/usr/bin/uptime"}, Time: cfg.Now()}
+	body, _ := json.Marshal(req)
+	if err := os.WriteFile(filepath.Join(reqDir, id), body, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	stderr.Reset()
+	code = Run(cfg, "sysh-result "+id)
+	if code != result.ExitNoResult {
+		t.Fatalf("exit %d, want %d", code, result.ExitNoResult)
+	}
+	if !strings.Contains(stderr.String(), "pending operator approval") {
+		t.Fatalf("pending case: %s", stderr.String())
+	}
+
+	// expired: request file older than the TTL
+	old := cfg.Now().Add(-approval.RequestTTL - time.Minute)
+	if err := os.Chtimes(filepath.Join(reqDir, id), old, old); err != nil {
+		t.Fatal(err)
+	}
+	stderr.Reset()
+	code = Run(cfg, "sysh-result "+id)
+	if code != result.ExitNoResult {
+		t.Fatalf("exit %d, want %d", code, result.ExitNoResult)
+	}
+	if !strings.Contains(stderr.String(), "expired") || !strings.Contains(stderr.String(), "re-run the command") {
+		t.Fatalf("expired case: %s", stderr.String())
+	}
+}
+
 func TestRunResultFetch(t *testing.T) {
 	cfg, _, stdout, stderr := testConfig(t, execPolicy)
 	dir := filepath.Join(cfg.HomeDir, "results")

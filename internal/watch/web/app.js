@@ -134,18 +134,21 @@ function renderPending() {
   panel.hidden = false;
 
   const row = (p) =>
-    `<div class="pending-row${p.expired ? " expired" : ""}">
+    `<div class="pending-row">
       <span class="pid">${esc(p.host)} · ${esc(p.id)}</span>
       <span class="pargv">${esc((p.argv || []).join(" "))}</span>
-      <span class="pmeta">key=${esc(p.key)} · age ${fmtAge(p.age_sec)}${p.expired ? " · expired (refuse-by-default)" : ""}</span>
-      <button class="runbtn herebtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}"${p.expired ? " disabled" : ""}>✓ approve here</button>
-      <button class="runbtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}"${p.expired ? " disabled" : ""}>▸ run in terminal</button>
+      <span class="pmeta">key=${esc(p.key)} · age ${fmtAge(p.age_sec)}</span>
+      <button class="runbtn herebtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}">✓ approve here</button>
+      <button class="runbtn" data-host="${esc(p.host)}" data-id="${esc(p.id)}">▸ run in terminal</button>
       <button class="copybtn" data-cmd="sy approve ${esc(p.host)} ${esc(p.id)}">copy</button>
     </div>`;
-  // live first — those are the actionable ones; expired trail after,
-  // faded, as the historical record of what was never answered
+  // Expired rows leave the panel the moment the poller marks them:
+  // the request is refuse-by-default, dead buttons answered nothing,
+  // and its story lives in the log. One quiet line says how many
+  // went that way, so silence is never the feedback.
   $("pendingrows").innerHTML =
-    live.map(row).join("") + expired.map(row).join("");
+    live.map(row).join("") +
+    (expired.length ? `<div class="pexpired">${expired.length} expired request${expired.length > 1 ? "s" : ""} hidden — refuse-by-default; the agent can re-file</div>` : "");
 }
 
 document.addEventListener("click", async (e) => {

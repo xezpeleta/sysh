@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -188,17 +189,29 @@ func cmdDoctor(args []string) int {
 			"authorizedkeysfile":    "/etc/sysh/authorized_keys",
 			"authenticationmethods": "publickey",
 			"exposeauthinfo":        "yes",
-			"permittty":             "no",
 			"disableforwarding":     "yes",
 			"x11forwarding":         "no",
 			"allowagentforwarding":  "no",
 			"permittunnel":          "no",
 			"permituserrc":          "no",
 		}
+		// PermitTTY is a legitimate choice, not drift: the shipped
+		// drop-in sets `yes` so a PTY reaches the argv console (§6.11);
+		// an operator may set `no` to keep the channel -c-only. Anything
+		// else (or absent) is drift.
+		wantOneOf := map[string][]string{
+			"permittty": {"yes", "no"},
+		}
 		drift := []string{}
 		for k, v := range want {
 			if cfg[strings.ToLower(k)] != v {
 				drift = append(drift, fmt.Sprintf("%s=%s (want %s)", k, cfg[strings.ToLower(k)], v))
+			}
+		}
+		for k, allowed := range wantOneOf {
+			got := cfg[strings.ToLower(k)]
+			if !slices.Contains(allowed, got) {
+				drift = append(drift, fmt.Sprintf("%s=%s (want one of %s)", k, got, strings.Join(allowed, "/")))
 			}
 		}
 		if len(drift) == 0 {

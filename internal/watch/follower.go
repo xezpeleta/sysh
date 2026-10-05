@@ -19,12 +19,17 @@ type sshStreamFunc func(addr string, argv []string) (io.Reader, func(), error)
 // sshDestArgs builds the argv prefix for shelling out to ssh against
 // root@addr. Addresses in hosts.toml may carry a port ("h:2222"); the
 // ssh binary does not accept "user@host:port" as a destination (that
-// is scp syntax), so a port becomes -p.
+// is scp syntax), so a port becomes -p. ConnectTimeout bounds every
+// root-channel use — a down host must cost 5 seconds, never the TCP
+// hang that would stall the sequential approvals poller for minutes
+// behind it — and BatchMode keeps the channel key-only: no prompt,
+// anywhere, can hang the operator's tooling.
 func sshDestArgs(addr string) []string {
+	pre := []string{"-o", "ConnectTimeout=5", "-o", "BatchMode=yes"}
 	if host, port, err := net.SplitHostPort(addr); err == nil && port != "" {
-		return []string{"-p", port, "root@" + host}
+		return append(pre, "-p", port, "root@"+host)
 	}
-	return []string{"root@" + addr}
+	return append(pre, "root@"+addr)
 }
 
 // realSSHStream shells out to ssh (the operator's own config, agent,
