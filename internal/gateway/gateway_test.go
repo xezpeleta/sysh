@@ -721,3 +721,22 @@ mode = "permissive"
 		t.Fatalf("no exec result line, stderr: %s", note)
 	}
 }
+
+// TestScopeUnitNameUniquePerExec pins the live-caught fix: within one
+// gateway process (a script or console session), every exec must get
+// a distinct transient scope unit — systemd refuses to load a
+// transient unit whose name already exists, which made script lines
+// fail with exit 1 in an alternating pattern before the sequence
+// number existed.
+func TestScopeUnitNameUniquePerExec(t *testing.T) {
+	start := time.Unix(1791228524, 0)
+	a := scopeUnitName("sy/bookworm", start)
+	b := scopeUnitName("sy/bookworm", start)
+	c := scopeUnitName("sy/bookworm", start)
+	if a == b || b == c || a == c {
+		t.Fatalf("scope unit names collide within one process: %q %q %q", a, b, c)
+	}
+	if !strings.HasPrefix(a, "sysh-sy-bookworm-") {
+		t.Fatalf("unexpected unit name shape: %q", a)
+	}
+}

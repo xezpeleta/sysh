@@ -122,7 +122,7 @@ func consoleBanner(s *session, pol *policy.Policy) string {
 	b.WriteString("  sy-policy   the policy in force\n")
 	b.WriteString("  exit        close the session\n")
 	if pol != nil && pol.AgentScripts != "" {
-		fmt.Fprintf(&b, "scripts: one command per line, first line %s —\n", ScriptShebang)
+		fmt.Fprintf(&b, "scripts: one command per line, first line \"%s\" —\n", ScriptShebang)
 		fmt.Fprintf(&b, "  upload to %s (needs an operator-acknowledged\n", pol.AgentScripts)
 		b.WriteString("  rsync rule — ask); every line is checked like a\n")
 		if pol.AgentScriptsMode == policy.AgentModeTraced {
@@ -178,7 +178,7 @@ func (s *session) runHelp(base audit.Event) (int, bool) {
 			b.WriteString("  scripts resolve via the interpreter's PATH: write rules\n")
 			b.WriteString("  for the bare names you use there.\n")
 		} else {
-			fmt.Fprintf(&b, "  one command per line, first line %s;\n", ScriptShebang)
+			fmt.Fprintf(&b, "  one command per line, first line \"%s\"\n", ScriptShebang)
 			b.WriteString("  run it like any command; every line is policy-checked\n")
 			b.WriteString("  and journaled like a direct exec\n")
 		}

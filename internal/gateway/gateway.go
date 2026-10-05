@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -456,6 +457,21 @@ func withDec(ev audit.Event, decision string) audit.Event {
 	return ev
 }
 
+// scopeSeq numbers transient scope units within one gateway process.
+var scopeSeq atomic.Uint64
+
+// scopeUnitName names the transient unit for one exec. A script or
+// console session is a single process, so the session's start time
+// alone would name every line's scope identically — and systemd
+// refuses to load a transient unit whose name already exists
+// ("already loaded", live-caught: script lines failed with exit 1 in
+// an alternating pattern). The per-process sequence keeps every
+// exec's unit unique; the start time keeps processes apart.
+func scopeUnitName(keyID string, start time.Time) string {
+	seq := scopeSeq.Add(1)
+	return fmt.Sprintf("sysh-%s-%d-%d", SanitizeUnit(keyID), start.UnixNano(), seq)
+}
+
 // execChild runs the resolved binary under containment (§6.7) and
 // reports the outcome. Raw child stdout/stderr stream to the client
 // through the gateway with a byte cap; on cap or timeout the whole
@@ -466,7 +482,7 @@ func execChild(cfg Config, emit func(audit.Event) error, ident Identity, argv []
 	useScope := cfg.Scopes
 	unit := ""
 	if useScope {
-		unit = fmt.Sprintf("sysh-%s-%d", SanitizeUnit(ident.KeyID), start.UnixNano())
+		unit = scopeUnitName(ident.KeyID, start)
 	}
 
 	var cmd *exec.Cmd
